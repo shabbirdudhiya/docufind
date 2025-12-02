@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openFile: (filePath) => ipcRenderer.invoke("open-file", filePath),
   openFileLocation: (filePath) =>
     ipcRenderer.invoke("open-file-location", filePath),
+  deleteFile: (filePath) => ipcRenderer.invoke("delete-file", filePath),
 
   // File system events
   onFileAdded: (callback) => ipcRenderer.on("file-added", callback),

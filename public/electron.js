@@ -436,3 +436,18 @@ async function searchInFiles(query) {
 
   return results;
 }
+
+ipcMain.handle("delete-file", async (event, filePath) => {
+  try {
+    await shell.trashItem(filePath);
+    // Remove from index
+    if (indexedFiles.has(filePath)) {
+      const docId = indexedFiles.get(filePath).id;
+      searchIndex.remove(docId);
+      indexedFiles.delete(filePath);
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});

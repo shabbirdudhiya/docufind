@@ -68,6 +68,7 @@ interface ElectronAPI {
   stopWatching: () => Promise<void>
   openFile: (filePath: string) => Promise<void>
   openFileLocation: (filePath: string) => Promise<void>
+  deleteFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
   onFileAdded: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileUpdated: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileRemoved: (callback: (event: any, data: { filePath: string }) => void) => void
@@ -139,6 +140,7 @@ export default function Home() {
   const [showFilePreview, setShowFilePreview] = useState<boolean>(true)
   const [autoWatch, setAutoWatch] = useState<boolean>(false)
   const [confirmClearData, setConfirmClearData] = useState<'history' | 'index' | null>(null)
+  const [fileToDelete, setFileToDelete] = useState<string | null>(null)
 
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -461,6 +463,26 @@ export default function Home() {
     try { await window.electronAPI.openFileLocation(filePath) } catch (err) { setError('Failed to open file location'); console.error(err) }
   }
 
+  const handleDeleteFile = async () => {
+    if (!window.electronAPI?.deleteFile || !fileToDelete) return
+    try {
+      const result = await window.electronAPI.deleteFile(fileToDelete)
+      if (result.success) {
+        // Remove from local state immediately
+        setFiles(prev => prev.filter(f => f.path !== fileToDelete))
+        setSearchResults(prev => prev.filter(r => r.file.path !== fileToDelete))
+        setFilteredResults(prev => prev.filter(r => r.file.path !== fileToDelete))
+        updateStats(files.filter(f => f.path !== fileToDelete))
+        setFileToDelete(null)
+      } else {
+        setError('Failed to delete file: ' + result.error)
+      }
+    } catch (err) {
+      setError('Failed to delete file')
+      console.error(err)
+    }
+  }
+
   const isRTLText = (text: string) => /[\u0591-\u07FF\u200F\u202B\u202E\uFB1D-\uFDFD\uFE70-\uFEFC]/.test(text)
   const getTextDirection = (text: string) => isRTL ? 'rtl' : (isRTLText(text) ? 'rtl' : 'ltr')
 
@@ -748,9 +770,14 @@ export default function Home() {
                                   <p className="text-xs text-muted-foreground">{formatFileSize(file.size)} • {new Date(file.lastModified).toLocaleDateString()}</p>
                                 </div>
                               </div>
-                              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary" onClick={() => openFile(file.path)}>
-                                <ExternalLink className="h-4 w-4" />
-                              </Button>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary" onClick={() => openFile(file.path)} title="Open">
+                                  <ExternalLink className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => setFileToDelete(file.path)} title="Delete">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -876,7 +903,7 @@ export default function Home() {
 
       {/* Preview Modal */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[85vh] p-0 gap-0 border-none shadow-2xl bg-transparent overflow-hidden flex flex-col">
+        <DialogContent className="max-w-4xl h-[85vh] p-0 gap-0 border-none shadow-2xl bg-background overflow-hidden flex flex-col">
           <div className="bg-background/80 backdrop-blur-xl border-b border-border/50 p-4 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-4 overflow-hidden">
               <div className="p-3 rounded-xl bg-primary/10 ring-1 ring-primary/20 shrink-0">
@@ -925,7 +952,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <pre className="text-sm leading-relaxed whitespace-pre-wrap font-mono text-foreground/90" dir={getTextDirection(previewContent)}>
-                      {previewContent}
+                      {highlightText(previewContent, searchQuery)}
                     </pre>
                   )}
                 </div>
@@ -955,6 +982,29 @@ export default function Home() {
               }}
             >
               Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete File Confirmation */}
+      <AlertDialog open={fileToDelete !== null} onOpenChange={(open) => !open && setFileToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete File?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to move this file to the trash?
+              <br />
+              <span className="font-mono text-xs text-muted-foreground mt-2 block break-all">{fileToDelete}</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteFile}
+            >
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
