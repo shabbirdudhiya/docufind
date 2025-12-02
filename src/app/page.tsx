@@ -826,20 +826,49 @@ export default function Home() {
       </div>
 
       {/* Loading Overlay */}
+      {/* Loading Overlay */}
       {showLoadingOverlay && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <Card className="w-full max-w-md border-none shadow-2xl">
-            <CardContent className="pt-8 pb-6 flex flex-col items-center text-center space-y-4">
-              <div className="relative">
-                <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
-                  <Sparkles className="h-8 w-8 text-primary" />
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md border-none shadow-2xl bg-card/90 backdrop-blur-xl ring-1 ring-border/50">
+            <CardContent className="pt-10 pb-8 flex flex-col items-center text-center space-y-6">
+
+              {/* Animation */}
+              <div className="relative w-24 h-24">
+                <div className="absolute inset-0 bg-primary/10 rounded-full animate-ping opacity-20" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="relative w-16 h-16 bg-primary/20 rounded-2xl flex items-center justify-center overflow-hidden">
+                    <FileText className="h-8 w-8 text-primary animate-bounce" />
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary/30 animate-pulse" />
+                  </div>
                 </div>
+                {/* Flying particles */}
+                <div className="absolute -top-2 -right-2 w-4 h-4 bg-blue-500/20 rounded-full animate-bounce delay-100" />
+                <div className="absolute -bottom-2 -left-2 w-3 h-3 bg-orange-500/20 rounded-full animate-bounce delay-300" />
               </div>
-              <div>
-                <h3 className="text-lg font-semibold">{loadingMessage}</h3>
-                <p className="text-sm text-muted-foreground">Please wait...</p>
+
+              <div className="space-y-2 w-full">
+                <h3 className="text-xl font-bold tracking-tight">
+                  {isScanning ? 'Building Search Index' : 'Searching...'}
+                </h3>
+                {isScanning && (
+                  <p className="text-sm text-muted-foreground font-medium text-primary/80">
+                    This process only happens once
+                  </p>
+                )}
               </div>
-              <Progress value={isScanning ? scanProgress : loadingProgress} className="h-2 w-full" />
+
+              <div className="w-full space-y-3">
+                <div className="flex justify-between text-xs text-muted-foreground font-mono px-1">
+                  <span>{loadingMessage.split(':')[0]}</span>
+                  <span>{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
+                </div>
+                <Progress value={isScanning ? scanProgress : loadingProgress} className="h-2 w-full" />
+                {isScanning && loadingMessage.includes(':') && (
+                  <p className="text-xs text-muted-foreground/70 truncate max-w-[300px] mx-auto h-4">
+                    {loadingMessage.split(':')[1]}
+                  </p>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -847,29 +876,62 @@ export default function Home() {
 
       {/* Preview Modal */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {previewFile && getFileIcon(previewFile.type)}
-              {previewFile?.name}
-            </DialogTitle>
-            <DialogDescription className="font-mono text-xs truncate">
-              {previewFile?.path}
-            </DialogDescription>
-          </DialogHeader>
-          <ScrollArea className="h-[60vh] mt-4 rounded-md border bg-muted/50 p-4">
-            {isLoadingPreview ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-5/6" />
+        <DialogContent className="max-w-4xl max-h-[85vh] p-0 gap-0 border-none shadow-2xl bg-transparent overflow-hidden flex flex-col">
+          <div className="bg-background/80 backdrop-blur-xl border-b border-border/50 p-4 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-4 overflow-hidden">
+              <div className="p-3 rounded-xl bg-primary/10 ring-1 ring-primary/20 shrink-0">
+                {previewFile && getFileIcon(previewFile.type)}
               </div>
-            ) : (
-              <pre className="text-sm whitespace-pre-wrap font-mono" dir={getTextDirection(previewContent)}>
-                {previewContent}
-              </pre>
-            )}
-          </ScrollArea>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg font-semibold truncate">
+                  {previewFile?.name}
+                </DialogTitle>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono mt-1">
+                  <span className="truncate max-w-[300px]">{previewFile?.path}</span>
+                  <span className="shrink-0">•</span>
+                  <span className="shrink-0">{previewFile && formatFileSize(previewFile.size)}</span>
+                  <span className="shrink-0">•</span>
+                  <span className="shrink-0">{previewFile && new Date(previewFile.lastModified).toLocaleDateString()}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-4">
+              <Button variant="outline" size="sm" className="h-9 gap-2 bg-background/50 hover:bg-background/80" onClick={() => previewFile && openFile(previewFile.path)}>
+                <ExternalLink className="h-4 w-4" />
+                <span className="hidden sm:inline">Open</span>
+              </Button>
+              <Button variant="outline" size="sm" className="h-9 gap-2 bg-background/50 hover:bg-background/80" onClick={() => previewFile && openFileLocation(previewFile.path)}>
+                <FolderOpen className="h-4 w-4" />
+                <span className="hidden sm:inline">Location</span>
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-hidden bg-muted/30 relative">
+            <ScrollArea className="h-full w-full">
+              <div className="p-6 min-h-full">
+                <div className="bg-card border border-border/50 shadow-sm rounded-xl p-6 min-h-[500px]">
+                  {isLoadingPreview ? (
+                    <div className="space-y-4 animate-pulse">
+                      <div className="h-4 bg-muted rounded w-3/4" />
+                      <div className="h-4 bg-muted rounded w-full" />
+                      <div className="h-4 bg-muted rounded w-5/6" />
+                      <div className="h-4 bg-muted rounded w-2/3" />
+                      <div className="space-y-2 pt-4">
+                        <div className="h-3 bg-muted/50 rounded w-full" />
+                        <div className="h-3 bg-muted/50 rounded w-full" />
+                        <div className="h-3 bg-muted/50 rounded w-full" />
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className="text-sm leading-relaxed whitespace-pre-wrap font-mono text-foreground/90" dir={getTextDirection(previewContent)}>
+                      {previewContent}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
 
