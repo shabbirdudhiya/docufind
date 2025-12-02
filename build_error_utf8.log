@@ -1,0 +1,99 @@
+﻿
+> docufind@1.0.0 build
+> next build
+
+   Γû▓ Next.js 15.3.5
+
+   Creating an optimized production build ...
+node.exe : [Error: Cannot apply unknown utility class `border-border`]
+At C:\Program Files\nodejs\npm.ps1:29 char:3
++   & $NODE_EXE $NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([Error: Cannot ...border-border`]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|C:\Personal_Data\Cod
+e_Projects\JS\docufind\node_modules\next\dist\build\webpack\loaders\css-loader\src\index.js??ruleSet[1].rules[13].oneOf
+[10].use[2]!C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\build\webpack\loaders\postcss-loader\src\
+index.js??ruleSet[1].rules[13].oneOf[10].use[3]!C:\Personal_Data\Code_Projects\JS\docufind\src\app\globals.css': No 
+serializer registered for PostCSSSyntaxError
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> 
+webpack/lib/ModuleBuildError -> PostCSSSyntaxError
+Failed to compile.
+
+./src/app/globals.css:1:1
+Syntax error: tailwindcss: C:\Personal_Data\Code_Projects\JS\docufind\src\app\globals.css Cannot apply unknown utility 
+class `border-border`
+
+[1m[31m>[39m[22m[90m 1 | [39m[36m@import[39m [32m"tailwindcss"[39m[33m;[39m
+ [90m   | [39m[1m[31m^[39m[22m
+ [90m 2 | [39m
+ [90m 3 | [39m[90m/* @plugin "tailwindcss-animate"; */[39m
+
+./src/app/globals.css
+Syntax error: tailwindcss: C:\Personal_Data\Code_Projects\JS\docufind\src\app\globals.css Cannot apply unknown utility 
+class `border-border` (1:1)
+
+[1m[31m>[39m[22m[90m 1 | [39m[36m@import[39m [32m"tailwindcss"[39m[33m;[39m
+ [90m   | [39m[1m[31m^[39m[22m
+ [90m 2 | [39m
+ [90m 3 | [39m[36m@plugin[39m [32m"tailwindcss-animate"[39m[33m;[39m
+
+    at tryRunOrWebpackError 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:316142)
+    at __webpack_require_module__ 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:131548)
+    at __nested_webpack_require_161494__ 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:130983)
+    at C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:131840
+    at symbolIterator 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\neo-async\async.js:1:14444)
+    at done (C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\neo-async\async.js:1:14824)
+    at Hook.eval [as callAsync] (eval at create 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:14:9224), 
+<anonymous>:15:1)
+    at Hook.CALL_ASYNC_DELEGATE [as _callAsync] 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:14:6378)
+    at C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:130703
+    at symbolIterator 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\neo-async\async.js:1:14402)
+-- inner error --
+Syntax error: tailwindcss: C:\Personal_Data\Code_Projects\JS\docufind\src\app\globals.css Cannot apply unknown utility 
+class `border-border` (1:1)
+
+[1m[31m>[39m[22m[90m 1 | [39m[36m@import[39m [32m"tailwindcss"[39m[33m;[39m
+ [90m   | [39m[1m[31m^[39m[22m
+ [90m 2 | [39m
+ [90m 3 | [39m[36m@plugin[39m [32m"tailwindcss-animate"[39m[33m;[39m
+
+    at Object.<anonymous> (C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\build\webpack\loaders\css-
+loader\src\index.js??ruleSet[1].rules[13].oneOf[10].use[2]!C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next
+\dist\build\webpack\loaders\postcss-loader\src\index.js??ruleSet[1].rules[13].oneOf[10].use[3]!C:\Personal_Data\Code_Pr
+ojects\JS\docufind\src\app\globals.css:1:7)
+    at C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:962742
+    at Hook.eval [as call] (eval at create 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:14:9002), 
+<anonymous>:7:1)
+    at Hook.CALL_DELEGATE [as _call] 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:14:6272)
+    at C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:131581
+    at tryRunOrWebpackError 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:316096)
+    at __webpack_require_module__ 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:131548)
+    at __nested_webpack_require_161494__ 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:130983)
+    at C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\webpack\bundle5.js:29:131840
+    at symbolIterator 
+(C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\compiled\neo-async\async.js:1:14444)
+
+Generated code for C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\build\webpack\loaders\css-loader\s
+rc\index.js??ruleSet[1].rules[13].oneOf[10].use[2]!C:\Personal_Data\Code_Projects\JS\docufind\node_modules\next\dist\bu
+ild\webpack\loaders\postcss-loader\src\index.js??ruleSet[1].rules[13].oneOf[10].use[3]!C:\Personal_Data\Code_Projects\J
+S\docufind\src\app\globals.css
+
+Import trace for requested module:
+./src/app/globals.css
+
+
+> Build failed because of webpack errors
