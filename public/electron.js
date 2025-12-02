@@ -228,39 +228,71 @@ async function indexFile(filePath) {
 
 async function scanFolder(folderPath) {
   const supportedExtensions = [".docx", ".pptx", ".txt", ".md"];
+  
+  // Phase 1: Discovery (Fast)
+  mainWindow.webContents.send("indexing-status", { isIndexing: true, message: "Discovering files..." });
+  const filePaths = await getAllFilePaths(folderPath, supportedExtensions);
+  
+  const totalFiles = filePaths.length;
   const files = [];
 
-  async function scanDirectory(dirPath) {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  // Phase 2: Indexing (Slow)
+  for (let i = 0; i < totalFiles; i++) {
+    const filePath = filePaths[i];
+    const fileName = path.basename(filePath);
+    
+    // Emit progress
+    mainWindow.webContents.send("indexing-progress", {
+      current: i + 1,
+      total: totalFiles,
+      filename: fileName
+    });
 
+    const doc = await indexFile(filePath);
+    if (doc) {
+      files.push({
+        path: doc.path,
+        name: doc.name,
+        size: doc.size,
+        lastModified: doc.lastModified,
+        type: doc.type,
+      });
+    }
+  }
+
+  return files;
+}
+
+async function getAllFilePaths(dirPath, supportedExtensions) {
+  let results = [];
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
-
       if (entry.isDirectory()) {
-        await scanDirectory(fullPath);
-      } else if (entry.isFile()) {
-        if (entry.name.startsWith('~$') || entry.name.startsWith('.')) {
-          continue;
+        if (!entry.name.startsWith('.')) { // Skip hidden folders
+          results = results.concat(await getAllFilePaths(fullPath, supportedExtensions));
         }
+      } else if (entry.isFile()) {
+        if (entry.name.startsWith('~$') || entry.name.startsWith('.')) continue;
         const ext = path.extname(entry.name).toLowerCase();
         if (supportedExtensions.includes(ext)) {
-          const doc = await indexFile(fullPath);
-          if (doc) {
-            files.push({
-              path: doc.path,
-              name: doc.name,
-              size: doc.size,
-              lastModified: doc.lastModified,
-              type: doc.type,
-            });
+          // Check for 0-byte files here to avoid adding them to the list
+          try {
+            const stats = await fs.stat(fullPath);
+            if (stats.size > 0) {
+              results.push(fullPath);
+            }
+          } catch (e) {
+            // Ignore file if stat fails
           }
         }
       }
     }
+  } catch (err) {
+    console.error(`Error scanning directory ${dirPath}:`, err);
   }
-
-  await scanDirectory(folderPath);
-  return files;
+  return results;
 }
 
 function getFileType(ext) {

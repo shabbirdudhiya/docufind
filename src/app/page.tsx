@@ -71,7 +71,8 @@ interface ElectronAPI {
   onFileAdded: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileUpdated: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileRemoved: (callback: (event: any, data: { filePath: string }) => void) => void
-  onIndexingStatus: (callback: (event: any, data: { isIndexing: boolean }) => void) => void
+  onIndexingStatus: (callback: (event: any, data: { isIndexing: boolean; message?: string }) => void) => void
+  onIndexingProgress: (callback: (event: any, data: { current: number; total: number; filename: string }) => void) => void
   removeAllListeners: (channel: string) => void
 }
 
@@ -165,17 +166,26 @@ export default function Home() {
 
   useEffect(() => {
     if (window.electronAPI) {
-      window.electronAPI.onIndexingStatus((event: any, data: { isIndexing: boolean }) => {
+      window.electronAPI.onIndexingStatus((event: any, data: { isIndexing: boolean; message?: string }) => {
         setIsIndexing(data.isIndexing)
         if (data.isIndexing) {
-          setLoadingMessage('Indexing files for instant search...')
+          setLoadingMessage(data.message || 'Indexing files for instant search...')
           setShowLoadingOverlay(true)
+          setScanProgress(0) // Reset progress on start
         } else {
           setShowLoadingOverlay(false)
         }
       })
+
+      window.electronAPI.onIndexingProgress((event: any, data: { current: number; total: number; filename: string }) => {
+        const percentage = Math.round((data.current / data.total) * 100)
+        setScanProgress(percentage)
+        setLoadingMessage(`Indexing ${data.current}/${data.total}: ${data.filename}`)
+      })
+
       return () => {
         window.electronAPI.removeAllListeners('indexing-status')
+        window.electronAPI.removeAllListeners('indexing-progress')
       }
     }
   }, [])
@@ -634,14 +644,14 @@ export default function Home() {
                                     <p className="text-xs text-muted-foreground font-mono">{result.file.path}</p>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview" className="hover:bg-primary/10 hover:text-primary">
+                                <div className="flex items-center gap-2">
+                                  <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <Eye className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file.path)} title="Open" className="hover:bg-primary/10 hover:text-primary">
+                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file.path)} title="Open" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <ExternalLink className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file.path)} title="Location" className="hover:bg-primary/10 hover:text-primary">
+                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file.path)} title="Location" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <FolderOpen className="h-4 w-4" />
                                   </Button>
                                 </div>
@@ -738,7 +748,7 @@ export default function Home() {
                                   <p className="text-xs text-muted-foreground">{formatFileSize(file.size)} • {new Date(file.lastModified).toLocaleDateString()}</p>
                                 </div>
                               </div>
-                              <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100" onClick={() => openFile(file.path)}>
+                              <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary" onClick={() => openFile(file.path)}>
                                 <ExternalLink className="h-4 w-4" />
                               </Button>
                             </div>

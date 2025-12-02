@@ -84,12 +84,6 @@ export function AppSidebar({
                     </SidebarMenuItem>
                 </SidebarMenu>
             </SidebarContent>
-            <SidebarFooter className="p-4 space-y-2">
-                <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground/50">
-                    <Sparkles className="h-3 w-3" />
-                    <span>Pro Edition</span>
-                </div>
-            </SidebarFooter>
             <SidebarRail />
         </Sidebar>
     )
