@@ -72,6 +72,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "electron-updater": "^6.6.2",
     "embla-carousel-react": "^8.6.0",
     "flexsearch": "^0.8.212",
     "framer-motion": "^12.23.2",
@@ -139,6 +140,13 @@
       "output": "dist",
       "buildResources": "build-resources"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "shabbirdudhiya",
+        "repo": "docufind"
+      }
+    ],
     "files": [
       "build/**/*",
       ".next/**/*",
@@ -162,7 +170,9 @@
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "cscLink": "cert.pfx",
+      "cscKeyPassword": "password123"
     },
     "linux": {
       "icon": "public/icon.png",

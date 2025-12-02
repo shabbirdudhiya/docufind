@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Database, Search, FileText, Settings, Sparkles, Moon, Sun, Languages } from "lucide-react"
+import { Database, Search, FileText, Settings, Sparkles, Moon, Sun, Languages, HelpCircle } from "lucide-react"
 import {
     Sidebar,
     SidebarContent,
@@ -80,6 +80,17 @@ export function AppSidebar({
                         >
                             <Settings className="h-4 w-4" />
                             <span className="font-medium">Settings</span>
+                        </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                        <SidebarMenuButton
+                            isActive={activeTab === "help"}
+                            onClick={() => setActiveTab("help")}
+                            tooltip="Help & About"
+                            className="h-10 px-4 rounded-lg transition-all duration-200 hover:bg-accent hover:text-accent-foreground data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-md"
+                        >
+                            <HelpCircle className="h-4 w-4" />
+                            <span className="font-medium">Help & About</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 </SidebarMenu>

@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs").promises;
 const chokidar = require("chokidar");
@@ -41,6 +42,18 @@ function createWindow() {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
+    autoUpdater.checkForUpdatesAndNotify();
+  });
+
+  // Remove default menu
+  mainWindow.setMenu(null);
+
+  autoUpdater.on('update-available', () => {
+    mainWindow.webContents.send('update_available');
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    mainWindow.webContents.send('update_downloaded');
   });
 
   mainWindow.on("closed", () => {

@@ -34,12 +34,19 @@ import {
   Eye as EyeIcon,
   AlertCircle,
   TrendingUp,
-  Database
+  TrendingUp,
+  Database,
+  HelpCircle,
+  Info,
+  Download,
+  User,
+  Github
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/AppSidebar'
+import { FilePreviewPane } from '@/components/FilePreviewPane'
 
 interface FileData {
   path: string
@@ -531,6 +538,7 @@ export default function Home() {
                 {activeTab === 'search' && 'Search Documents'}
                 {activeTab === 'files' && 'File Library'}
                 {activeTab === 'settings' && 'Settings'}
+                {activeTab === 'help' && 'Help & About'}
               </h1>
             </div>
 
@@ -847,6 +855,104 @@ export default function Home() {
                   </Card>
                 </div>
               )}
+
+              {/* Help View */}
+              {activeTab === 'help' && (
+                <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {/* Hero Section */}
+                  <div className="text-center py-8 space-y-4">
+                    <div className="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto ring-1 ring-primary/20">
+                      <Database className="h-10 w-10 text-primary" />
+                    </div>
+                    <div>
+                      <h2 className="text-3xl font-bold tracking-tight">DocuFind</h2>
+                      <p className="text-muted-foreground mt-2">Your intelligent local document search engine</p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                      <span className="px-2 py-1 rounded-md bg-muted border border-border">v1.0.0</span>
+                      <span>•</span>
+                      <span>Built with ❤️ by Shabbir Dudhiya</span>
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {/* How to Use */}
+                    <Card className="glass-card h-full">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <HelpCircle className="h-5 w-5 text-primary" />
+                          How to Use
+                        </CardTitle>
+                        <CardDescription>Get started in 4 simple steps</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <div className="flex gap-4">
+                          <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">1</div>
+                          <div>
+                            <h4 className="font-medium mb-1">Select a Folder</h4>
+                            <p className="text-sm text-muted-foreground">Click the "Select Folder" button to choose the directory you want to search.</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">2</div>
+                          <div>
+                            <h4 className="font-medium mb-1">Let it Index</h4>
+                            <p className="text-sm text-muted-foreground">Wait a moment while DocuFind scans and indexes your documents for instant searching.</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">3</div>
+                          <div>
+                            <h4 className="font-medium mb-1">Search Instantly</h4>
+                            <p className="text-sm text-muted-foreground">Type any keyword in the search bar. Results appear instantly as you type.</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">4</div>
+                          <div>
+                            <h4 className="font-medium mb-1">Preview & Open</h4>
+                            <p className="text-sm text-muted-foreground">Click the eye icon to preview content or use the folder icon to open the file location.</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <div className="space-y-6">
+                      {/* Updates */}
+                      <Card className="glass-card">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <Download className="h-5 w-5 text-primary" />
+                            Updates
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="bg-muted/50 rounded-lg p-4 text-sm space-y-2">
+                            <p className="font-medium">How to update DocuFind:</p>
+                            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                              <li>Download the latest version installer.</li>
+                              <li>Run the installer (no need to uninstall first).</li>
+                              <li>The app will update and restart automatically.</li>
+                            </ol>
+                            <div className="pt-2 mt-2 border-t border-border/50">
+                              <p className="text-xs text-muted-foreground">
+                                Current Version: <span className="font-mono text-foreground">1.0.0</span>
+                              </p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+
+                  {/* Author Footer */}
+                  <div className="text-center py-6 text-xs text-muted-foreground">
+                    <p>
+                      DocuFind v1.0.0 • Created by <span className="font-medium text-foreground">Shabbir Dudhiya</span>
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
@@ -902,67 +1008,16 @@ export default function Home() {
       )}
 
       {/* Preview Modal */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl h-[85vh] p-0 gap-0 border-none shadow-2xl bg-background overflow-hidden flex flex-col">
-          <div className="bg-background/80 backdrop-blur-xl border-b border-border/50 p-4 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-4 overflow-hidden">
-              <div className="p-3 rounded-xl bg-primary/10 ring-1 ring-primary/20 shrink-0">
-                {previewFile && getFileIcon(previewFile.type)}
-              </div>
-              <div className="min-w-0">
-                <DialogTitle className="text-lg font-semibold truncate">
-                  {previewFile?.name}
-                </DialogTitle>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono mt-1">
-                  <span className="truncate max-w-[300px]">{previewFile?.path}</span>
-                  <span className="shrink-0">•</span>
-                  <span className="shrink-0">{previewFile && formatFileSize(previewFile.size)}</span>
-                  <span className="shrink-0">•</span>
-                  <span className="shrink-0">{previewFile && new Date(previewFile.lastModified).toLocaleDateString()}</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 ml-4">
-              <Button variant="outline" size="sm" className="h-9 gap-2 bg-background/50 hover:bg-background/80" onClick={() => previewFile && openFile(previewFile.path)}>
-                <ExternalLink className="h-4 w-4" />
-                <span className="hidden sm:inline">Open</span>
-              </Button>
-              <Button variant="outline" size="sm" className="h-9 gap-2 bg-background/50 hover:bg-background/80" onClick={() => previewFile && openFileLocation(previewFile.path)}>
-                <FolderOpen className="h-4 w-4" />
-                <span className="hidden sm:inline">Location</span>
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-hidden bg-muted/30 relative">
-            <ScrollArea className="h-full w-full">
-              <div className="p-6 min-h-full">
-                <div className="bg-card border border-border/50 shadow-sm rounded-xl p-6 min-h-[500px]">
-                  {isLoadingPreview ? (
-                    <div className="space-y-4 animate-pulse">
-                      <div className="h-4 bg-muted rounded w-3/4" />
-                      <div className="h-4 bg-muted rounded w-full" />
-                      <div className="h-4 bg-muted rounded w-5/6" />
-                      <div className="h-4 bg-muted rounded w-2/3" />
-                      <div className="space-y-2 pt-4">
-                        <div className="h-3 bg-muted/50 rounded w-full" />
-                        <div className="h-3 bg-muted/50 rounded w-full" />
-                        <div className="h-3 bg-muted/50 rounded w-full" />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="max-w-prose mx-auto">
-                      <pre className="text-sm md:text-base leading-7 whitespace-pre-wrap font-sans text-foreground/90" dir={getTextDirection(previewContent)}>
-                        {highlightText(previewContent, searchQuery)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ScrollArea>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <FilePreviewPane
+        file={previewFile}
+        content={previewContent}
+        searchQuery={searchQuery}
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        onOpenFile={(path) => openFile(path)}
+        onOpenLocation={(path) => openFileLocation(path)}
+        isLoading={isLoadingPreview}
+      />
 
       {/* Confirm Dialog */}
       <AlertDialog open={confirmClearData !== null} onOpenChange={(open) => !open && setConfirmClearData(null)}>
