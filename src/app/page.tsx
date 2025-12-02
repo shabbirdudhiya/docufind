@@ -951,9 +951,11 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    <pre className="text-sm leading-relaxed whitespace-pre-wrap font-mono text-foreground/90" dir={getTextDirection(previewContent)}>
-                      {highlightText(previewContent, searchQuery)}
-                    </pre>
+                    <div className="max-w-prose mx-auto">
+                      <pre className="text-sm md:text-base leading-7 whitespace-pre-wrap font-sans text-foreground/90" dir={getTextDirection(previewContent)}>
+                        {highlightText(previewContent, searchQuery)}
+                      </pre>
+                    </div>
                   )}
                 </div>
               </div>
