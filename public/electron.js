@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs").promises;
@@ -19,6 +19,32 @@ let searchIndex = new Document({
   tokenize: "forward"
 });
 
+// Register the custom protocol as privileged BEFORE app is ready
+// This is critical for the renderer to be able to load resources
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'app',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    bypassCSP: true,
+    corsEnabled: true
+  }
+}]);
+
+app.whenReady().then(() => {
+  // Handle custom protocol requests
+  protocol.handle('app', (request) => {
+    const { pathname } = new URL(request.url);
+    const filePath = pathname === '/' ? '/index.html' : pathname;
+    const fullPath = path.normalize(path.join(__dirname, '../out', filePath));
+    
+    return net.fetch('file://' + fullPath);
+  });
+
+  createWindow();
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -33,13 +59,6 @@ function createWindow() {
     icon: path.join(__dirname, "../public/icon.png"),
   });
 
-  if (process.env.NODE_ENV === "development") {
-    mainWindow.loadURL("http://localhost:3000");
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, "../build/index.html"));
-  }
-
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
     autoUpdater.checkForUpdatesAndNotify();
@@ -47,6 +66,13 @@ function createWindow() {
 
   // Remove default menu
   mainWindow.setMenu(null);
+
+  if (process.env.NODE_ENV === "development") {
+    mainWindow.loadURL("http://localhost:3000");
+    mainWindow.webContents.openDevTools();
+  } else {
+    mainWindow.loadURL("app://./index.html");
+  }
 
   autoUpdater.on('update-available', () => {
     mainWindow.webContents.send('update_available');
@@ -63,8 +89,6 @@ function createWindow() {
     }
   });
 }
-
-app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
