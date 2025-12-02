@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onFileAdded: (callback) => ipcRenderer.on("file-added", callback),
   onFileUpdated: (callback) => ipcRenderer.on("file-updated", callback),
   onFileRemoved: (callback) => ipcRenderer.on("file-removed", callback),
+  onIndexingStatus: (callback) => ipcRenderer.on("indexing-status", callback),
 
   // Remove listeners
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),

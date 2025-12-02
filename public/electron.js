@@ -212,7 +212,13 @@ async function indexFile(filePath) {
     };
 
     searchIndex.add(doc);
-    indexedFiles.set(filePath, doc);
+    
+    // Optimization: Do not store full content in indexedFiles map to save memory
+    // We only need metadata for the file list
+    const metadata = { ...doc };
+    delete metadata.content;
+    indexedFiles.set(filePath, metadata);
+    
     return doc;
   } catch (err) {
     console.error(`Failed to index ${filePath}:`, err);

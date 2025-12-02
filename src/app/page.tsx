@@ -71,6 +71,7 @@ interface ElectronAPI {
   onFileAdded: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileUpdated: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
   onFileRemoved: (callback: (event: any, data: { filePath: string }) => void) => void
+  onIndexingStatus: (callback: (event: any, data: { isIndexing: boolean }) => void) => void
   removeAllListeners: (channel: string) => void
 }
 
@@ -164,7 +165,7 @@ export default function Home() {
 
   useEffect(() => {
     if (window.electronAPI) {
-      window.electronAPI.on('indexing-status', (event: any, data: { isIndexing: boolean }) => {
+      window.electronAPI.onIndexingStatus((event: any, data: { isIndexing: boolean }) => {
         setIsIndexing(data.isIndexing)
         if (data.isIndexing) {
           setLoadingMessage('Indexing files for instant search...')
@@ -621,7 +622,7 @@ export default function Home() {
 
                       <div className="grid gap-4">
                         {filteredResults.map((result, index) => (
-                          <Card key={index} className="group hover:shadow-lg transition-all duration-300 border-border/50 bg-card/50 backdrop-blur-sm">
+                          <Card key={index} className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-default">
                             <CardContent className="p-5">
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center gap-4">
@@ -634,21 +635,21 @@ export default function Home() {
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview">
+                                  <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview" className="hover:bg-primary/10 hover:text-primary">
                                     <Eye className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file.path)} title="Open">
+                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file.path)} title="Open" className="hover:bg-primary/10 hover:text-primary">
                                     <ExternalLink className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file.path)} title="Location">
+                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file.path)} title="Location" className="hover:bg-primary/10 hover:text-primary">
                                     <FolderOpen className="h-4 w-4" />
                                   </Button>
                                 </div>
                               </div>
 
-                              <div className="space-y-2 bg-muted/30 rounded-xl p-3">
+                              <div className="space-y-2 bg-muted/30 rounded-xl p-3 border border-border/10">
                                 {result.matches.slice(0, 2).map((match, i) => (
-                                  <p key={i} className="text-sm text-muted-foreground leading-relaxed">
+                                  <p key={i} className="text-sm text-muted-foreground leading-relaxed font-mono">
                                     ...{highlightText(match.context, searchQuery)}...
                                   </p>
                                 ))}
@@ -660,10 +661,18 @@ export default function Home() {
                     </div>
                   ) : (
                     files.length > 0 && !isSearching && (
-                      <div className="flex flex-col items-center justify-center py-20 text-center opacity-50">
-                        <Search className="h-16 w-16 mb-4 text-muted-foreground/50" />
-                        <h3 className="text-xl font-medium">Ready to search</h3>
-                        <p className="text-muted-foreground">Enter keywords to search through your documents</p>
+                      <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in-95 duration-500">
+                        <div className="w-24 h-24 bg-primary/5 rounded-full flex items-center justify-center mb-6 ring-1 ring-primary/20">
+                          <Search className="h-10 w-10 text-primary/40" />
+                        </div>
+                        <h3 className="text-2xl font-semibold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">Ready to search</h3>
+                        <p className="text-muted-foreground max-w-md mx-auto leading-relaxed">
+                          Enter keywords above to instantly search through your <span className="font-medium text-foreground">{files.length}</span> indexed documents.
+                        </p>
+                        <div className="mt-8 flex gap-2 text-xs text-muted-foreground">
+                          <span className="px-2 py-1 rounded-md bg-muted border border-border">Ctrl + F</span>
+                          <span>to focus search</span>
+                        </div>
                       </div>
                     )
                   )}
