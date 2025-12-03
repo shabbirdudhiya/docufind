@@ -41,6 +41,15 @@ export interface IndexStats {
   folderCount: number;
 }
 
+export interface LoadIndexResult {
+  loaded: boolean;
+  message?: string;
+  fileCount?: number;
+  folderCount?: number;
+  folders?: string[];
+  excludedFolders?: string[];
+}
+
 // Event listeners
 const listeners: Record<string, Function[]> = {};
 
@@ -237,6 +246,103 @@ export const tauriAPI = {
     try {
       const stats = await invoke<IndexStats>("get_index_stats");
       return { success: true, stats };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Get all indexed files (for Files view)
+  getAllFiles: async () => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const files = await invoke<RustFileData[]>("get_all_files");
+      const mappedFiles: FileData[] = files.map((f) => ({
+        path: f.path,
+        name: f.name,
+        size: f.size,
+        lastModified: new Date(f.last_modified),
+        type: f.file_type as "word" | "powerpoint" | "text",
+      }));
+      return { success: true, files: mappedFiles };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Save index to disk for persistence
+  saveIndex: async () => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("save_index");
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Load index from disk
+  loadIndex: async () => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const result = await invoke<LoadIndexResult>("load_index");
+      return { success: true, ...result };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Get excluded folders
+  getExcludedFolders: async () => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const folders = await invoke<string[]>("get_excluded_folders");
+      return { success: true, folders };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Add folder to exclusion list (excluded from search results)
+  addExcludedFolder: async (path: string) => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("add_excluded_folder", { path });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Remove folder from exclusion list
+  removeExcludedFolder: async (path: string) => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("remove_excluded_folder", { path });
+      return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message || e };
     }

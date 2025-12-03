@@ -1,13 +1,14 @@
 use chrono::{DateTime, Utc};
 #[allow(unused_imports)]
 use rayon::prelude::*;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::{Mutex, RwLock};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use walkdir::WalkDir;
 use xml::reader::{EventReader, XmlEvent};
 use zip::ZipArchive;
@@ -57,12 +58,53 @@ pub struct FolderInfo {
 struct AppState {
     index: RwLock<Vec<FileData>>,
     watched_folders: Mutex<HashSet<String>>,
+    excluded_folders: Mutex<HashSet<String>>, // Folders to exclude from search results
     watcher: Mutex<Option<RecommendedWatcher>>,
     // Tantivy search index
     tantivy_index: Index,
     tantivy_reader: IndexReader,
     tantivy_writer: Mutex<IndexWriter>,
     tantivy_schema: Schema,
+    // SQLite database for persistence
+    db: Mutex<Option<Connection>>,
+    // App data path for persistence
+    data_dir: Mutex<Option<std::path::PathBuf>>,
+}
+
+/// Initialize SQLite database schema
+fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS files (
+            path TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            last_modified TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            content TEXT NOT NULL
+        )",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS folders (
+            path TEXT PRIMARY KEY,
+            is_excluded INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
+    
+    // Create indexes for faster queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_files_folder ON files(path)",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_files_type ON files(file_type)",
+        [],
+    )?;
+    
+    Ok(())
 }
 
 fn create_tantivy_index() -> (Index, IndexReader, IndexWriter, Schema) {
@@ -100,11 +142,14 @@ impl Default for AppState {
         Self {
             index: RwLock::new(Vec::new()),
             watched_folders: Mutex::new(HashSet::new()),
+            excluded_folders: Mutex::new(HashSet::new()),
             watcher: Mutex::new(None),
             tantivy_index: index,
             tantivy_reader: reader,
             tantivy_writer: Mutex::new(writer),
             tantivy_schema: schema,
+            db: Mutex::new(None),
+            data_dir: Mutex::new(None),
         }
     }
 }
@@ -281,6 +326,9 @@ async fn scan_folder(path: String, state: State<'_, AppState>, app: AppHandle) -
         writer.commit().map_err(|e| e.to_string())?;
     }
 
+    // Auto-save index after scanning
+    let _ = save_index_internal(&state);
+
     Ok(new_files)
 }
 
@@ -314,6 +362,12 @@ async fn remove_folder(path: String, state: State<'_, AppState>) -> Result<(), S
         folders.remove(&path);
     }
 
+    // Also remove from excluded folders if present
+    {
+        let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+        excluded.remove(&path);
+    }
+
     // Remove files from index
     {
         let mut index = state.index.write().map_err(|e| e.to_string())?;
@@ -324,6 +378,9 @@ async fn remove_folder(path: String, state: State<'_, AppState>) -> Result<(), S
         };
         index.retain(|f| !f.path.starts_with(&path_prefix) && f.path != path);
     }
+
+    // Auto-save after removing
+    let _ = save_index_internal(&state);
 
     Ok(())
 }
@@ -533,6 +590,9 @@ async fn search_index(
     
     let query_lower = query.to_lowercase();
     
+    // Get excluded folders for filtering
+    let excluded_folders = state.excluded_folders.lock().map_err(|e| e.to_string())?.clone();
+    
     // First, try tantivy search for English/Latin text
     let mut results = search_with_tantivy(&query, &state)?;
     
@@ -541,6 +601,19 @@ async fn search_index(
     if results.is_empty() {
         println!("📝 Tantivy found nothing, trying direct content search...");
         results = search_direct_content(&query_lower, &state)?;
+    }
+    
+    // Filter out results from excluded folders
+    if !excluded_folders.is_empty() {
+        let before_filter = results.len();
+        results.retain(|r| {
+            !excluded_folders.iter().any(|excluded| {
+                r.file.path.starts_with(excluded)
+            })
+        });
+        if before_filter != results.len() {
+            println!("🚫 Filtered out {} results from excluded folders", before_filter - results.len());
+        }
     }
     
     println!("✅ Search complete: {} results found", results.len());
@@ -1114,6 +1187,10 @@ async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
         folders.clear();
     }
     {
+        let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+        excluded.clear();
+    }
+    {
         let mut watcher = state.watcher.lock().map_err(|e| e.to_string())?;
         *watcher = None;
     }
@@ -1122,6 +1199,14 @@ async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
         let mut writer = state.tantivy_writer.lock().map_err(|e| e.to_string())?;
         writer.delete_all_documents().map_err(|e| e.to_string())?;
         writer.commit().map_err(|e| e.to_string())?;
+    }
+    // Clear SQLite database
+    {
+        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(conn) = db_guard.as_ref() {
+            conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
+        }
     }
     println!("🧹 Cleared index");
     Ok(())
@@ -1148,6 +1233,344 @@ async fn get_index_stats(state: State<'_, AppState>) -> Result<serde_json::Value
     }))
 }
 
+/// Get all indexed files (for the Files view)
+#[tauri::command]
+async fn get_all_files(state: State<'_, AppState>) -> Result<Vec<FileData>, String> {
+    let index = state.index.read().map_err(|e| e.to_string())?;
+    // Return files without content to reduce payload size
+    Ok(index.iter().map(|f| FileData {
+        path: f.path.clone(),
+        name: f.name.clone(),
+        size: f.size,
+        last_modified: f.last_modified,
+        file_type: f.file_type.clone(),
+        content: String::new(), // Don't send content to reduce payload
+    }).collect())
+}
+
+/// Save index to SQLite database for persistence
+#[tauri::command]
+async fn save_index(state: State<'_, AppState>) -> Result<(), String> {
+    // Initialize database connection if needed
+    let data_dir = {
+        let dir_guard = state.data_dir.lock().map_err(|e| e.to_string())?;
+        match dir_guard.as_ref() {
+            Some(d) => d.clone(),
+            None => return Err("Data directory not set".to_string()),
+        }
+    };
+    
+    // Ensure data directory exists
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    
+    let db_path = data_dir.join("docufind.db");
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    
+    // Initialize schema
+    init_database(&conn).map_err(|e| e.to_string())?;
+    
+    // Get current state
+    let files = state.index.read().map_err(|e| e.to_string())?;
+    let folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
+    let excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+    
+    // Clear and rewrite (transaction for atomicity)
+    conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
+    
+    // Insert files
+    for file in files.iter() {
+        conn.execute(
+            "INSERT OR REPLACE INTO files (path, name, size, last_modified, file_type, content) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                file.path,
+                file.name,
+                file.size,
+                file.last_modified.to_rfc3339(),
+                file.file_type,
+                file.content
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    // Insert folders with exclusion status
+    for folder in folders.iter() {
+        let is_excluded = if excluded.contains(folder) { 1 } else { 0 };
+        conn.execute(
+            "INSERT OR REPLACE INTO folders (path, is_excluded) VALUES (?1, ?2)",
+            params![folder, is_excluded],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    // Store connection in state for future use
+    {
+        let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        *db_guard = Some(Connection::open(&db_path).map_err(|e| e.to_string())?);
+    }
+    
+    println!("💾 Saved {} files, {} folders to SQLite", files.len(), folders.len());
+    Ok(())
+}
+
+/// Internal synchronous function to save index to SQLite (for use after scan/remove operations)
+fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
+    // Get data directory
+    let data_dir = {
+        let dir_guard = state.data_dir.lock().map_err(|e| e.to_string())?;
+        match dir_guard.as_ref() {
+            Some(d) => d.clone(),
+            None => return Ok(()), // No data dir yet, skip saving
+        }
+    };
+    
+    // Ensure data directory exists
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    
+    let db_path = data_dir.join("docufind.db");
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    
+    // Initialize schema
+    init_database(&conn).map_err(|e| e.to_string())?;
+    
+    // Get current state
+    let files = state.index.read().map_err(|e| e.to_string())?;
+    let folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
+    let excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+    
+    // Clear and rewrite
+    conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
+    
+    // Insert files
+    for file in files.iter() {
+        conn.execute(
+            "INSERT OR REPLACE INTO files (path, name, size, last_modified, file_type, content) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                file.path,
+                file.name,
+                file.size,
+                file.last_modified.to_rfc3339(),
+                file.file_type,
+                file.content
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    // Insert folders with exclusion status
+    for folder in folders.iter() {
+        let is_excluded = if excluded.contains(folder) { 1 } else { 0 };
+        conn.execute(
+            "INSERT OR REPLACE INTO folders (path, is_excluded) VALUES (?1, ?2)",
+            params![folder, is_excluded],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    // Update connection in state
+    {
+        let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        *db_guard = Some(Connection::open(&db_path).map_err(|e| e.to_string())?);
+    }
+    
+    println!("💾 Auto-saved {} files, {} folders to SQLite", files.len(), folders.len());
+    Ok(())
+}
+
+/// Load index from SQLite database
+#[tauri::command]
+async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    // Get data directory
+    let data_dir = {
+        let dir_guard = state.data_dir.lock().map_err(|e| e.to_string())?;
+        match dir_guard.as_ref() {
+            Some(d) => d.clone(),
+            None => return Ok(serde_json::json!({
+                "loaded": false,
+                "message": "Data directory not set"
+            })),
+        }
+    };
+    
+    let db_path = data_dir.join("docufind.db");
+    
+    // Check if database exists
+    if !db_path.exists() {
+        return Ok(serde_json::json!({
+            "loaded": false,
+            "message": "No saved index found"
+        }));
+    }
+    
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    
+    // Load folders
+    let mut folder_stmt = conn.prepare("SELECT path, is_excluded FROM folders")
+        .map_err(|e| e.to_string())?;
+    let folder_rows = folder_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+    }).map_err(|e| e.to_string())?;
+    
+    let mut valid_folders: Vec<String> = Vec::new();
+    let mut excluded_folders: Vec<String> = Vec::new();
+    
+    for row in folder_rows {
+        let (path, is_excluded) = row.map_err(|e| e.to_string())?;
+        if Path::new(&path).exists() {
+            if is_excluded == 1 {
+                excluded_folders.push(path.clone());
+            }
+            valid_folders.push(path);
+        }
+    }
+    
+    if valid_folders.is_empty() {
+        return Ok(serde_json::json!({
+            "loaded": false,
+            "message": "No saved folders found"
+        }));
+    }
+    
+    // Load files from valid folders only
+    let mut file_stmt = conn.prepare(
+        "SELECT path, name, size, last_modified, file_type, content FROM files"
+    ).map_err(|e| e.to_string())?;
+    
+    let file_rows = file_stmt.query_map([], |row| {
+        Ok(FileData {
+            path: row.get(0)?,
+            name: row.get(1)?,
+            size: row.get(2)?,
+            last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            file_type: row.get(4)?,
+            content: row.get(5)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut valid_files: Vec<FileData> = Vec::new();
+    for row in file_rows {
+        let file = row.map_err(|e| e.to_string())?;
+        // Only include files from valid folders that still exist
+        if valid_folders.iter().any(|folder| file.path.starts_with(folder)) 
+            && Path::new(&file.path).exists() {
+            valid_files.push(file);
+        }
+    }
+    
+    let file_count = valid_files.len();
+    let folder_count = valid_folders.len();
+    
+    // Update in-memory state
+    {
+        let mut index = state.index.write().map_err(|e| e.to_string())?;
+        *index = valid_files.clone();
+    }
+    {
+        let mut folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
+        *folders = valid_folders.iter().cloned().collect();
+    }
+    {
+        let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+        *excluded = excluded_folders.iter().cloned().collect();
+    }
+    
+    // Rebuild Tantivy index from loaded files
+    {
+        let mut writer = state.tantivy_writer.lock().map_err(|e| e.to_string())?;
+        let schema = &state.tantivy_schema;
+        
+        let path_field = schema.get_field("path").unwrap();
+        let name_field = schema.get_field("name").unwrap();
+        let content_field = schema.get_field("content").unwrap();
+        let file_type_field = schema.get_field("file_type").unwrap();
+        let size_field = schema.get_field("size").unwrap();
+        let modified_field = schema.get_field("modified").unwrap();
+        
+        // Clear existing
+        writer.delete_all_documents().map_err(|e| e.to_string())?;
+        
+        for file in &valid_files {
+            writer.add_document(doc!(
+                path_field => file.path.clone(),
+                name_field => file.name.clone(),
+                content_field => file.content.clone(),
+                file_type_field => file.file_type.clone(),
+                size_field => file.size,
+                modified_field => file.last_modified.timestamp()
+            )).map_err(|e| e.to_string())?;
+        }
+        
+        writer.commit().map_err(|e| e.to_string())?;
+    }
+    
+    // Store connection in state for future use
+    {
+        let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        *db_guard = Some(Connection::open(&db_path).map_err(|e| e.to_string())?);
+    }
+    
+    println!("📂 Loaded {} files from {} folders (SQLite)", file_count, folder_count);
+    
+    Ok(serde_json::json!({
+        "loaded": true,
+        "fileCount": file_count,
+        "folderCount": folder_count,
+        "folders": valid_folders,
+        "excludedFolders": excluded_folders
+    }))
+}
+
+/// Add a folder to the exclusion list (excluded from search results)
+#[tauri::command]
+async fn add_excluded_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+        excluded.insert(path.clone());
+    }
+    println!("🚫 Added to exclusion list: {}", path);
+    
+    // Update in database
+    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    if let Some(conn) = db_guard.as_ref() {
+        conn.execute(
+            "UPDATE folders SET is_excluded = 1 WHERE path = ?1",
+            params![path],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+/// Remove a folder from the exclusion list
+#[tauri::command]
+async fn remove_excluded_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+        excluded.remove(&path);
+    }
+    println!("✅ Removed from exclusion list: {}", path);
+    
+    // Update in database
+    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    if let Some(conn) = db_guard.as_ref() {
+        conn.execute(
+            "UPDATE folders SET is_excluded = 0 WHERE path = ?1",
+            params![path],
+        ).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(())
+}
+
+/// Get list of excluded folders
+#[tauri::command]
+async fn get_excluded_folders(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
+    Ok(excluded.iter().cloned().collect())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1167,9 +1590,24 @@ pub fn run() {
             start_watching,
             stop_watching,
             clear_index,
-            get_index_stats
+            get_index_stats,
+            get_all_files,
+            save_index,
+            load_index,
+            add_excluded_folder,
+            remove_excluded_folder,
+            get_excluded_folders
         ])
         .setup(|app| {
+            // Initialize data directory for persistence
+            if let Some(data_dir) = app.path().app_data_dir().ok() {
+                let state = app.state::<AppState>();
+                if let Ok(mut dir) = state.data_dir.lock() {
+                    *dir = Some(data_dir.clone());
+                    println!("📁 Data directory: {:?}", data_dir);
+                };
+            }
+            
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

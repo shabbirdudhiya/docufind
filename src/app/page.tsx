@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Search,
   FolderOpen,
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   Filter,
   Eye,
+  EyeOff,
   ExternalLink,
   Sparkles,
   History,
@@ -110,6 +112,7 @@ export default function Home() {
   // App State
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [indexedFolders, setIndexedFolders] = useState<string[]>([])
+  const [excludedFolders, setExcludedFolders] = useState<string[]>([]) // Folders excluded from search
   const [files, setFiles] = useState<FileData[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
@@ -118,6 +121,7 @@ export default function Home() {
   const [isScanning, setIsScanning] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [isWatching, setIsWatching] = useState(false)
+  const [isLoadingIndex, setIsLoadingIndex] = useState(true) // Loading saved index on startup
   const [scanProgress, setScanProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState({
@@ -170,6 +174,51 @@ export default function Home() {
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const progressInterval = useRef<NodeJS.Timeout | null>(null)
+
+  // Load saved index on startup
+  useEffect(() => {
+    const loadSavedIndex = async () => {
+      setIsLoadingIndex(true)
+      try {
+        const result = await tauriAPI.loadIndex()
+        console.log('📂 Load index result:', result)
+        if (result.success && result.loaded) {
+          // Index was loaded from disk
+          if (result.folders && result.folders.length > 0) {
+            setIndexedFolders(result.folders)
+            setSelectedFolder(result.folders[0])
+          }
+          if (result.excludedFolders) {
+            setExcludedFolders(result.excludedFolders)
+          }
+          // Get the stats from the backend
+          const statsResult = await tauriAPI.getIndexStats()
+          if (statsResult.success && statsResult.stats) {
+            setStats({
+              totalFiles: statsResult.stats.totalFiles,
+              wordFiles: statsResult.stats.wordFiles,
+              powerPointFiles: statsResult.stats.powerPointFiles,
+              textFiles: statsResult.stats.textFiles,
+              totalSize: statsResult.stats.totalSize
+            })
+          }
+          // Get all indexed files for the Files view
+          const filesResult = await tauriAPI.getAllFiles()
+          if (filesResult.success && filesResult.files) {
+            setFiles(filesResult.files)
+          }
+          console.log(`✅ Loaded ${result.fileCount} files from ${result.folderCount} folders`)
+        } else {
+          console.log('📭 No saved index found, starting fresh')
+        }
+      } catch (e) {
+        console.error('Failed to load saved index:', e)
+      } finally {
+        setIsLoadingIndex(false)
+      }
+    }
+    loadSavedIndex()
+  }, [])
 
   useEffect(() => {
     setIsMounted(true)
@@ -315,11 +364,22 @@ export default function Home() {
     localStorage.setItem('autoWatch', newValue.toString())
   }
 
-  const clearIndexedFiles = () => {
-    setFiles([])
-    setSearchResults([])
-    setFilteredResults([])
-    setStats({ totalFiles: 0, wordFiles: 0, powerPointFiles: 0, textFiles: 0, totalSize: 0 })
+  const clearIndexedFiles = async () => {
+    try {
+      // Clear backend index
+      await tauriAPI.clearIndex()
+      // Clear frontend state
+      setFiles([])
+      setSearchResults([])
+      setFilteredResults([])
+      setIndexedFolders([])
+      setExcludedFolders([])
+      setSelectedFolder(null)
+      setStats({ totalFiles: 0, wordFiles: 0, powerPointFiles: 0, textFiles: 0, totalSize: 0 })
+    } catch (err) {
+      setError('Failed to clear index')
+      console.error(err)
+    }
     setConfirmClearData(null)
   }
 
@@ -334,6 +394,28 @@ export default function Home() {
     setSearchHistory([])
     localStorage.removeItem('searchHistory')
     setConfirmClearData(null)
+  }
+
+  // Excluded folders management
+  const toggleFolderExclusion = async (folderPath: string) => {
+    try {
+      if (excludedFolders.includes(folderPath)) {
+        // Remove from exclusion
+        const result = await tauriAPI.removeExcludedFolder(folderPath)
+        if (result.success) {
+          setExcludedFolders(prev => prev.filter(f => f !== folderPath))
+        }
+      } else {
+        // Add to exclusion
+        const result = await tauriAPI.addExcludedFolder(folderPath)
+        if (result.success) {
+          setExcludedFolders(prev => [...prev, folderPath])
+        }
+      }
+    } catch (err) {
+      setError('Failed to update folder exclusion')
+      console.error(err)
+    }
   }
 
   const previewFileContent = async (file: FileData) => {
@@ -800,12 +882,26 @@ export default function Home() {
                         </Button>
                       </div>
 
-                      {selectedFolder && (
+                      {/* Loading saved index indicator */}
+                      {isLoadingIndex && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground px-1 animate-pulse">
+                          <RefreshCw className="h-4 w-4 animate-spin text-primary" />
+                          <span>Loading saved index...</span>
+                        </div>
+                      )}
+
+                      {selectedFolder && !isLoadingIndex && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground px-1">
                           <div className="h-2 w-2 rounded-full bg-emerald-500" />
                           <span className="font-mono truncate max-w-xl">{selectedFolder}</span>
                           <span className="mx-2">•</span>
                           <span>{files.length} files indexed</span>
+                          {excludedFolders.length > 0 && (
+                            <>
+                              <span className="mx-2">•</span>
+                              <span className="text-muted-foreground/60">{excludedFolders.length} folder{excludedFolders.length !== 1 ? 's' : ''} excluded</span>
+                            </>
+                          )}
                         </div>
                       )}
 
@@ -826,24 +922,50 @@ export default function Home() {
                             </Button>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {indexedFolders.map((folder) => (
-                              <div 
-                                key={folder}
-                                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm"
-                              >
-                                <FolderOpen className="h-3 w-3" />
-                                <span className="truncate max-w-[200px]" title={folder}>
-                                  {folder.split(/[/\\]/).pop()}
-                                </span>
-                                <button
-                                  onClick={() => removeFolder(folder)}
-                                  className="hover:bg-primary/20 rounded-full p-0.5"
-                                  title="Remove folder"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ))}
+                            {indexedFolders.map((folder) => {
+                              const isExcluded = excludedFolders.includes(folder)
+                              return (
+                                <TooltipProvider key={folder}>
+                                  <div 
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${
+                                      isExcluded 
+                                        ? 'bg-muted text-muted-foreground opacity-60' 
+                                        : 'bg-primary/10 text-primary'
+                                    }`}
+                                  >
+                                    <FolderOpen className="h-3 w-3" />
+                                    <span className={`truncate max-w-[200px] ${isExcluded ? 'line-through' : ''}`} title={folder}>
+                                      {folder.split(/[/\\]/).pop()}
+                                    </span>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          onClick={() => toggleFolderExclusion(folder)}
+                                          className={`rounded-full p-0.5 transition-colors ${
+                                            isExcluded 
+                                              ? 'hover:bg-primary/20 text-muted-foreground' 
+                                              : 'hover:bg-primary/20'
+                                          }`}
+                                          title={isExcluded ? "Include in search" : "Exclude from search"}
+                                        >
+                                          {isExcluded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {isExcluded ? "Include in search results" : "Exclude from search results"}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <button
+                                      onClick={() => removeFolder(folder)}
+                                      className="hover:bg-destructive/20 hover:text-destructive rounded-full p-0.5"
+                                      title="Remove folder from index"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </TooltipProvider>
+                              )
+                            })}
                           </div>
                         </div>
                       )}
@@ -959,15 +1081,26 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    files.length > 0 && !isSearching && (
+                    !isSearching && !isLoadingIndex && (
                       <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in zoom-in-95 duration-500">
                         <div className="w-24 h-24 bg-primary/5 rounded-full flex items-center justify-center mb-6 ring-1 ring-primary/20">
                           <Search className="h-10 w-10 text-primary/40" />
                         </div>
-                        <h3 className="text-2xl font-semibold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">Ready to search</h3>
-                        <p className="text-muted-foreground max-w-md mx-auto leading-relaxed">
-                          Enter keywords above to instantly search through your <span className="font-medium text-foreground">{files.length}</span> indexed documents.
-                        </p>
+                        {files.length > 0 ? (
+                          <>
+                            <h3 className="text-2xl font-semibold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">Ready to search</h3>
+                            <p className="text-muted-foreground max-w-md mx-auto leading-relaxed">
+                              Enter keywords above to instantly search through your <span className="font-medium text-foreground">{files.length}</span> indexed documents.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <h3 className="text-2xl font-semibold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">Welcome to DocuFind</h3>
+                            <p className="text-muted-foreground max-w-md mx-auto leading-relaxed">
+                              Select a folder to get started. Your index will be saved automatically so you don't have to re-index every time.
+                            </p>
+                          </>
+                        )}
                         <div className="mt-8 flex gap-2 text-xs text-muted-foreground">
                           <span className="px-2 py-1 rounded-md bg-muted border border-border">Ctrl + F</span>
                           <span>to focus search</span>
@@ -1120,12 +1253,74 @@ export default function Home() {
                     </CardContent>
                   </Card>
 
+                  {/* Excluded Folders Section */}
                   <Card className="glass-card">
                     <CardHeader>
-                      <CardTitle>Data Management</CardTitle>
+                      <CardTitle className="flex items-center gap-2">
+                        <EyeOff className="h-5 w-5" />
+                        Search Exclusions
+                      </CardTitle>
+                      <CardDescription>
+                        Folders excluded from search results will still be indexed, but won't appear in search results.
+                        Useful for archive folders you rarely need to search.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {excludedFolders.length > 0 ? (
+                        <div className="space-y-2">
+                          {excludedFolders.map((folder) => (
+                            <div 
+                              key={folder}
+                              className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border/50"
+                            >
+                              <div className="flex items-center gap-3">
+                                <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                <div>
+                                  <p className="font-medium text-sm">{folder.split(/[/\\]/).pop()}</p>
+                                  <p className="text-xs text-muted-foreground font-mono truncate max-w-md">{folder}</p>
+                                </div>
+                              </div>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => toggleFolderExclusion(folder)}
+                                className="text-primary hover:bg-primary/10"
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                Include
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <EyeOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">No folders excluded from search</p>
+                          <p className="text-xs mt-1">Click the eye icon on any indexed folder to exclude it</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="glass-card">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Database className="h-5 w-5" />
+                        Data Management
+                      </CardTitle>
                       <CardDescription>Manage your search index and history</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                          <Database className="h-4 w-4" />
+                          <span className="text-sm font-medium">Persistent Storage Enabled</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Your index is automatically saved and restored when you reopen the app. No need to re-index!
+                        </p>
+                      </div>
+                      <Separator />
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
                           <label className="text-sm font-medium">Clear History</label>
@@ -1139,7 +1334,7 @@ export default function Home() {
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
                           <label className="text-sm font-medium">Clear Index</label>
-                          <p className="text-xs text-muted-foreground">Remove all indexed files</p>
+                          <p className="text-xs text-muted-foreground">Remove all indexed files and saved data</p>
                         </div>
                         <Button variant="destructive" size="sm" onClick={() => setConfirmClearData('index')}>
                           <Trash2 className="h-4 w-4 mr-2" /> Clear
@@ -1190,8 +1385,8 @@ export default function Home() {
                         <div className="flex gap-4">
                           <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">2</div>
                           <div>
-                            <h4 className="font-medium mb-1">Let it Index</h4>
-                            <p className="text-sm text-muted-foreground">Wait a moment while DocuFind scans and indexes your documents for instant searching.</p>
+                            <h4 className="font-medium mb-1">Index Once</h4>
+                            <p className="text-sm text-muted-foreground">DocuFind indexes your documents once and saves them. Next time you open the app, it's instant!</p>
                           </div>
                         </div>
                         <div className="flex gap-4">
@@ -1205,13 +1400,52 @@ export default function Home() {
                           <div className="flex-none w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">4</div>
                           <div>
                             <h4 className="font-medium mb-1">Preview & Open</h4>
-                            <p className="text-sm text-muted-foreground">Click the eye icon to preview content or use the folder icon to open the file location.</p>
+                            <p className="text-sm text-muted-foreground">Click results to preview, or use icons to open files. Exclude folders from search using the eye icon.</p>
                           </div>
                         </div>
                       </CardContent>
                     </Card>
 
                     <div className="space-y-6">
+                      {/* Features */}
+                      <Card className="glass-card">
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <Sparkles className="h-5 w-5 text-primary" />
+                            Key Features
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          <div className="flex items-start gap-3">
+                            <div className="p-1.5 rounded-md bg-emerald-500/10">
+                              <Database className="h-4 w-4 text-emerald-500" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">Persistent Index</p>
+                              <p className="text-xs text-muted-foreground">Your index is saved automatically — no re-indexing needed!</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <div className="p-1.5 rounded-md bg-orange-500/10">
+                              <EyeOff className="h-4 w-4 text-orange-500" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">Search Exclusions</p>
+                              <p className="text-xs text-muted-foreground">Hide folders from search without removing them from the index.</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <div className="p-1.5 rounded-md bg-blue-500/10">
+                              <Eye className="h-4 w-4 text-blue-500" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">File Watching</p>
+                              <p className="text-xs text-muted-foreground">Auto-update index when files change in watched folders.</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
                       {/* Updates */}
                       <Card className="glass-card">
                         <CardHeader>
@@ -1238,6 +1472,36 @@ export default function Home() {
                       </Card>
                     </div>
                   </div>
+
+                  {/* Tips Section */}
+                  <Card className="glass-card">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <HelpCircle className="h-5 w-5 text-primary" />
+                        Tips & Shortcuts
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-2 gap-4 text-sm">
+                        <div className="space-y-2">
+                          <p className="font-medium">Keyboard Shortcuts</p>
+                          <div className="space-y-1 text-muted-foreground">
+                            <div className="flex justify-between"><span>Focus search</span><kbd className="px-2 py-0.5 bg-muted rounded text-xs">Ctrl+F</kbd></div>
+                            <div className="flex justify-between"><span>Open folder</span><kbd className="px-2 py-0.5 bg-muted rounded text-xs">Ctrl+O</kbd></div>
+                            <div className="flex justify-between"><span>Toggle dark mode</span><kbd className="px-2 py-0.5 bg-muted rounded text-xs">Ctrl+D</kbd></div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <p className="font-medium">Search Tips</p>
+                          <div className="space-y-1 text-muted-foreground text-xs">
+                            <p>• Use <code className="bg-muted px-1 rounded">AND</code> for multiple required terms</p>
+                            <p>• Use <code className="bg-muted px-1 rounded">"quotes"</code> for exact phrases</p>
+                            <p>• Use <code className="bg-muted px-1 rounded">-word</code> to exclude terms</p>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
 
                   {/* Author Footer */}
                   <div className="text-center py-6 text-xs text-muted-foreground">
