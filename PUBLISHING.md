@@ -1,329 +1,375 @@
-# DocuFind Publishing Guide
+# DocuFind - Publishing & Release Guide
 
-This guide will walk you through the process of building and publishing DocuFind for different platforms.
+Complete guide to build and publish DocuFind for Windows and macOS.
 
-## Prerequisites
+## Table of Contents
 
-Before publishing, ensure you have:
-
-1. **Node.js 18+** installed
-2. **npm** package manager
-3. All dependencies installed: `npm install`
-4. The app builds successfully: `npm run build`
+1. [Quick Start (Recommended)](#quick-start-recommended)
+2. [Manual Building](#manual-building)
+3. [GitHub Actions Setup (Automated)](#github-actions-setup-automated)
+4. [Code Signing](#code-signing)
+5. [Auto-Update System](#auto-update-system)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
-## Building for Distribution
+## Quick Start (Recommended)
 
-### 1. Build the Next.js App
+The easiest way to publish is using GitHub Actions. Here's how:
 
-First, build the Next.js application:
+### Step 1: Set Up GitHub Secrets
+
+1. Go to your GitHub repo: `https://github.com/shabbirdudhiya/docufind`
+2. Navigate to **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret** and add:
+
+   | Secret Name                          | Value                                            |
+   | ------------------------------------ | ------------------------------------------------ |
+   | `TAURI_SIGNING_PRIVATE_KEY`          | Contents of `C:\Users\shabb\.tauri\docufind.key` |
+   | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set when generating the key     |
+
+   **To get the key contents:**
+
+   ```powershell
+   Get-Content "$env:USERPROFILE\.tauri\docufind.key" -Raw | Set-Clipboard
+   # Now paste into GitHub Secrets
+   ```
+
+### Step 2: Update Version
+
+Edit `src-tauri/tauri.conf.json`:
+
+```json
+"version": "1.0.0"
+```
+
+Also update `package.json`:
+
+```json
+"version": "1.0.0"
+```
+
+### Step 3: Create a Release
+
+```powershell
+# Commit your changes
+git add .
+git commit -m "Release v1.0.0"
+
+# Create and push a tag
+git tag v1.0.0
+git push origin main
+git push origin v1.0.0
+```
+
+### Step 4: Wait for Build
+
+1. Go to **Actions** tab in your GitHub repo
+2. Watch the "Release" workflow run
+3. Once complete, go to **Releases**
+4. Find your draft release with all platform builds attached
+5. Edit the release notes and click **Publish release**
+
+**That's it!** Your app is now available for download with:
+
+- ✅ Windows (64-bit): `.exe` installer
+- ✅ macOS (Intel): `.dmg`
+- ✅ macOS (Apple Silicon): `.dmg`
+- ✅ Linux: `.deb` and `.AppImage`
+
+---
+
+## Manual Building
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) installed
+- [Node.js](https://nodejs.org/) 18+ installed
+- For macOS: Xcode Command Line Tools (`xcode-select --install`)
+
+### Building for Windows
+
+```powershell
+cd C:\Personal_Data\Code_Projects\JS\docufind-tauri
+
+# Set signing keys (required for auto-update)
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$env:USERPROFILE\.tauri\docufind.key" -Raw
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "your-password"
+
+# Build
+npm run tauri build
+```
+
+**Output files** in `src-tauri/target/release/bundle/`:
+
+```
+nsis/
+├── DocuFind_1.0.0_x64-setup.exe       # Main installer (share this)
+├── DocuFind_1.0.0_x64-setup.nsis.zip  # For auto-update
+└── DocuFind_1.0.0_x64-setup.nsis.zip.sig  # Signature
+```
+
+### Building for macOS
+
+On a Mac (required for macOS builds):
 
 ```bash
-npm run build
+cd /path/to/docufind-tauri
+
+# Set signing keys
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/docufind.key)
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-password"
+
+# Build for Apple Silicon (M1/M2/M3)
+npm run tauri build -- --target aarch64-apple-darwin
+
+# Build for Intel Macs
+npm run tauri build -- --target x86_64-apple-darwin
 ```
 
-### 2. Package the Electron App
+**Output files** in `src-tauri/target/{arch}/release/bundle/`:
 
-#### Build for All Platforms (on your current OS)
+```
+dmg/
+├── DocuFind_1.0.0_aarch64.dmg  # For Apple Silicon
+└── DocuFind_1.0.0_x64.dmg      # For Intel
+macos/
+└── DocuFind.app.tar.gz         # For auto-update
+```
+
+### Building for Linux
 
 ```bash
-npm run dist
+# Install dependencies (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+# Set signing keys
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/docufind.key)
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="your-password"
+
+# Build
+npm run tauri build
 ```
 
-#### Build for Specific Platforms
+---
+
+## GitHub Actions Setup (Automated)
+
+The workflow file is already set up at `.github/workflows/release.yml`. It will:
+
+1. Build for Windows, macOS (both Intel and Apple Silicon), and Linux
+2. Sign all builds with your Tauri key
+3. Create a draft GitHub release with all artifacts
+4. Generate `latest.json` for auto-updates
+
+### Workflow Triggers
+
+The workflow runs when you push a tag starting with `v`:
 
 ```bash
-# Windows
-npm run dist:win
-
-# macOS (requires macOS)
-npm run dist:mac
-
-# Linux
-npm run dist:linux
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
-### 3. Output Location
+### Required Secrets
 
-Built files will be in the `dist/` folder:
+| Secret                               | Description                      |
+| ------------------------------------ | -------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Your private key contents        |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Key password                     |
+| `GITHUB_TOKEN`                       | Automatically provided by GitHub |
+
+### Optional: macOS Code Signing
+
+For notarized macOS builds (removes "unidentified developer" warning):
+
+1. Join Apple Developer Program ($99/year)
+2. Create certificates in Apple Developer portal
+3. Add these secrets:
+   - `APPLE_CERTIFICATE`: Base64 encoded .p12 certificate
+   - `APPLE_CERTIFICATE_PASSWORD`: Certificate password
+   - `APPLE_SIGNING_IDENTITY`: e.g., "Developer ID Application: Your Name"
+   - `APPLE_ID`: Your Apple ID email
+   - `APPLE_PASSWORD`: App-specific password
+   - `APPLE_TEAM_ID`: Your team ID
+
+---
+
+## Code Signing
+
+### Tauri Update Signing (Required)
+
+Your signing keys are already set up:
+
+- **Private Key:** `C:\Users\shabb\.tauri\docufind.key`
+- **Public Key:** Configured in `tauri.conf.json`
+
+⚠️ **IMPORTANT:** Keep your private key safe! If you lose it, you cannot push updates to existing installations.
+
+### Windows Code Signing (Optional)
+
+Without code signing, users will see SmartScreen warnings. Options:
+
+#### Option A: Self-Signed (Free, Internal Use)
+
+```powershell
+# Run as Administrator
+$cert = New-SelfSignedCertificate `
+  -Type CodeSigningCert `
+  -Subject "CN=DocuFind" `
+  -KeyUsage DigitalSignature `
+  -FriendlyName "DocuFind Code Signing" `
+  -CertStoreLocation "Cert:\CurrentUser\My" `
+  -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
+
+# Export to PFX
+$password = ConvertTo-SecureString -String "YourPassword" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath "docufind-cert.pfx" -Password $password
+```
+
+#### Option B: Trusted Certificate (Paid, Public Distribution)
+
+Purchase from DigiCert, Sectigo, or GlobalSign (~$200-500/year for OV certificates).
+
+### macOS Code Signing (Optional)
+
+Without signing, users must right-click → Open to bypass Gatekeeper. For proper distribution:
+
+1. Join Apple Developer Program ($99/year)
+2. Create a "Developer ID Application" certificate
+3. Notarize your app with Apple
+
+---
+
+## Auto-Update System
+
+### How It Works
+
+1. App checks `https://github.com/shabbirdudhiya/docufind/releases/latest/download/latest.json`
+2. Compares current version with latest
+3. If newer version found, prompts user to update
+4. Downloads and installs update automatically
+5. Verifies signature before installing
+
+### Testing Auto-Update
+
+1. Build and install version `1.0.0`
+2. Update version to `1.0.1` in config files
+3. Build again and create a GitHub release
+4. Run the installed `1.0.0` app
+5. It should detect and offer the update
+
+### Manual Release for Auto-Update
+
+If not using GitHub Actions, upload these files to your release:
 
 ```
-dist/
-├── DocuFind-Setup-1.0.0.exe          # Windows installer
-├── DocuFind-1.0.0-portable.exe       # Windows portable
-├── DocuFind-1.0.0.dmg                # macOS disk image
-├── DocuFind-1.0.0-mac.zip            # macOS zip
-├── DocuFind-1.0.0.AppImage           # Linux AppImage
-├── docufind_1.0.0_amd64.deb          # Linux Debian package
-└── latest.yml                         # Auto-update manifest
+DocuFind_1.0.1_x64-setup.exe          # Windows installer
+DocuFind_1.0.1_x64-setup.nsis.zip     # Windows update bundle
+DocuFind_1.0.1_x64-setup.nsis.zip.sig # Windows signature
+DocuFind_1.0.1_aarch64.dmg            # macOS ARM installer
+DocuFind.app.tar.gz                    # macOS update bundle
+DocuFind.app.tar.gz.sig               # macOS signature
+latest.json                            # Update manifest (auto-generated)
 ```
-
----
-
-## Platform-Specific Notes
-
-### Windows
-
-#### Building on Windows
-
-- Use `npm run dist:win` to create:
-  - **NSIS installer** (.exe) - Full installation with uninstaller
-  - **Portable** (.exe) - No installation required
-
-#### Code Signing (Recommended for Production)
-
-1. Obtain a code signing certificate from a trusted CA
-2. Set environment variables:
-   ```bash
-   set CSC_LINK=path/to/certificate.pfx
-   set CSC_KEY_PASSWORD=your-password
-   ```
-3. Build with signing: `npm run dist:win`
-
-#### Windows Store (Optional)
-
-1. Create a [Microsoft Partner Center](https://partner.microsoft.com/) account
-2. Register your app
-3. Add MSIX target to `package.json`:
-   ```json
-   "win": {
-     "target": ["nsis", "appx"]
-   }
-   ```
-4. Build and submit via Partner Center
-
----
-
-### macOS
-
-#### Building on macOS
-
-- Use `npm run dist:mac` to create:
-  - **DMG** - Disk image for easy installation
-  - **ZIP** - For direct distribution
-
-#### Code Signing (Required for Distribution)
-
-1. Enroll in [Apple Developer Program](https://developer.apple.com/programs/) ($99/year)
-2. Create a Developer ID Application certificate
-3. Set environment variables:
-   ```bash
-   export CSC_LINK=path/to/certificate.p12
-   export CSC_KEY_PASSWORD=your-password
-   export APPLE_ID=your@email.com
-   export APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
-   ```
-4. Build with signing and notarization
-
-#### Mac App Store (Optional)
-
-1. Create an App Store Connect listing
-2. Configure `package.json` for MAS build:
-   ```json
-   "mac": {
-     "target": ["dmg", "mas"]
-   }
-   ```
-3. Submit via Transporter or Xcode
-
----
-
-### Linux
-
-#### Building on Linux
-
-- Use `npm run dist:linux` to create:
-  - **AppImage** - Universal Linux format
-  - **DEB** - For Debian/Ubuntu
-  - **RPM** - For Fedora/CentOS (add to targets)
-
-#### Snap Store (Optional)
-
-1. Create a [Snapcraft](https://snapcraft.io/) account
-2. Add snap target:
-   ```json
-   "linux": {
-     "target": ["AppImage", "deb", "snap"]
-   }
-   ```
-3. Build and upload: `snapcraft push dist/docufind_1.0.0_amd64.snap`
-
-#### Flatpak (Optional)
-
-1. Create a Flathub account
-2. Create a flatpak manifest
-3. Submit to [Flathub](https://flathub.org/)
-
----
-
-## Distribution Channels
-
-### 1. GitHub Releases (Recommended)
-
-The easiest way to distribute your app:
-
-1. **Create a GitHub Repository**
-
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial release v1.0.0"
-   git remote add origin https://github.com/yourusername/docufind.git
-   git push -u origin main
-   ```
-
-2. **Create a Release**
-
-   - Go to your repository on GitHub
-   - Click "Releases" → "Create a new release"
-   - Tag version: `v1.0.0`
-   - Title: `DocuFind v1.0.0`
-   - Add release notes
-   - Upload all files from `dist/` folder
-   - Publish release
-
-3. **Enable Auto-Updates (Optional)**
-   Add to `package.json`:
-   ```json
-   "build": {
-     "publish": {
-       "provider": "github",
-       "owner": "yourusername",
-       "repo": "docufind"
-     }
-   }
-   ```
-
-### 2. Your Own Website
-
-1. Host the built files on your website
-2. Provide download links for each platform
-3. Consider using a CDN for faster downloads
-
-### 3. Direct Distribution
-
-Share the built files directly:
-
-- **Windows**: Share the `.exe` installer or portable version
-- **macOS**: Share the `.dmg` file
-- **Linux**: Share the `.AppImage` or `.deb` file
-
----
-
-## Auto-Updates
-
-DocuFind supports automatic updates using electron-updater:
-
-### Setup GitHub Auto-Updates
-
-1. Add to `package.json`:
-
-   ```json
-   "build": {
-     "publish": {
-       "provider": "github",
-       "owner": "yourusername",
-       "repo": "docufind"
-     }
-   }
-   ```
-
-2. Add auto-update code to `electron.js`:
-
-   ```javascript
-   const { autoUpdater } = require("electron-updater");
-
-   app.whenReady().then(() => {
-     autoUpdater.checkForUpdatesAndNotify();
-   });
-   ```
-
-3. When you release a new version:
-   - Update version in `package.json`
-   - Build the app
-   - Create a new GitHub release
-   - Upload the new files
-   - Users will receive update notifications
-
----
-
-## Version Management
-
-### Updating Version
-
-1. Update `package.json`:
-
-   ```json
-   "version": "1.1.0"
-   ```
-
-2. Update the version badge in `README.md` if needed
-
-3. Rebuild and release
-
-### Semantic Versioning
-
-Follow [SemVer](https://semver.org/):
-
-- **MAJOR** (1.0.0 → 2.0.0): Breaking changes
-- **MINOR** (1.0.0 → 1.1.0): New features, backwards compatible
-- **PATCH** (1.0.0 → 1.0.1): Bug fixes
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+### Windows SmartScreen Warning
 
-1. **Build fails on Windows**
+**Problem:** "Windows protected your PC" message  
+**Solution:**
 
-   - Run as Administrator
-   - Check for antivirus blocking
+- Users can click "More info" → "Run anyway"
+- For smoother experience, purchase a code signing certificate
+- With an EV certificate, SmartScreen warnings are eliminated immediately
 
-2. **Build fails on macOS**
+### macOS "Cannot be opened because it is from an unidentified developer"
 
-   - Ensure Xcode Command Line Tools are installed
-   - Check certificate validity
+**Problem:** Gatekeeper blocks the app  
+**Solution:**
 
-3. **Large bundle size**
+- Users: Right-click the app → Open → Open
+- Developer: Join Apple Developer Program and notarize the app
 
-   - Use `npm run build` before `npm run dist`
-   - Check for unnecessary dependencies
+### Build Fails with "not enough memory"
 
-4. **Missing icon**
-   - Ensure `public/icon.svg` exists
-   - For Windows, provide `.ico` file
-   - For macOS, provide `.icns` file
+**Problem:** Tantivy compilation requires ~2GB RAM  
+**Solution:**
 
-### Getting Help
+```powershell
+cargo clean
+npm run tauri build
+```
 
-- [Electron Builder Documentation](https://www.electron.build/)
-- [Electron Documentation](https://electronjs.org/docs)
-- [GitHub Issues](https://github.com/yourusername/docufind/issues)
+Or close other applications to free memory.
+
+### Auto-Update Not Working
+
+**Checklist:**
+
+- [ ] `latest.json` is accessible at the update URL
+- [ ] Version in `latest.json` is higher than installed version
+- [ ] Signature files (`.sig`) are uploaded alongside installers
+- [ ] Public key in `tauri.conf.json` matches your private key
+
+### "Invalid signature" Error
+
+**Problem:** Update fails signature verification  
+**Solution:** Ensure you use the same key pair for all builds. If you regenerated keys, users must reinstall the app.
+
+### Icon Looks Blurry
+
+**Solution:** Regenerate icons from a high-resolution source:
+
+```powershell
+# Convert SVG to high-res PNG first (1024x1024)
+npx sharp -i public/icon.svg -o icon_temp.png resize 1024 1024
+
+# Generate all icon sizes
+npm run tauri icon icon_temp.png
+
+# Clean up
+Remove-Item icon_temp.png
+```
 
 ---
 
-## Checklist Before Publishing
+## Release Checklist
 
-- [ ] Update version number in `package.json`
-- [ ] Test the app on your platform
-- [ ] Build with `npm run dist`
-- [ ] Test the built installer/package
-- [ ] Create release notes
-- [ ] Upload to distribution channel
-- [ ] Update README with download links
-- [ ] Announce the release
+Before each release:
 
----
-
-## Security Considerations
-
-1. **Code Signing**: Always sign your app for production
-2. **Notarization**: Required for macOS distribution outside App Store
-3. **HTTPS**: Use HTTPS for auto-update servers
-4. **Dependency Audit**: Run `npm audit` before releasing
+- [ ] Update version in `src-tauri/tauri.conf.json`
+- [ ] Update version in `package.json`
+- [ ] Test build locally: `npm run tauri build`
+- [ ] Commit changes: `git commit -am "Release vX.Y.Z"`
+- [ ] Create tag: `git tag vX.Y.Z`
+- [ ] Push: `git push origin main && git push origin vX.Y.Z`
+- [ ] Wait for GitHub Actions to complete
+- [ ] Review and publish the draft release
+- [ ] Test auto-update from previous version
 
 ---
 
-Happy Publishing! 🚀
+## File Locations Reference
+
+| File            | Location                                |
+| --------------- | --------------------------------------- |
+| Private Key     | `C:\Users\shabb\.tauri\docufind.key`    |
+| Tauri Config    | `src-tauri/tauri.conf.json`             |
+| App Version     | `src-tauri/tauri.conf.json` → `version` |
+| Icons           | `src-tauri/icons/`                      |
+| Build Output    | `src-tauri/target/release/bundle/`      |
+| GitHub Workflow | `.github/workflows/release.yml`         |
+
+---
+
+## Links
+
+- [Tauri v2 Documentation](https://tauri.app/v2/guides/)
+- [Tauri Auto-Update Guide](https://tauri.app/v2/guides/distribute/updater/)
+- [GitHub Actions](https://docs.github.com/en/actions)
+- [Your Releases](https://github.com/shabbirdudhiya/docufind/releases)

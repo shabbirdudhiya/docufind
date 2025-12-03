@@ -34,19 +34,21 @@ import {
   Eye as EyeIcon,
   AlertCircle,
   TrendingUp,
-  TrendingUp,
   Database,
   HelpCircle,
   Info,
   Download,
   User,
-  Github
+  Github,
+  Plus
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/AppSidebar'
 import { FilePreviewPane } from '@/components/FilePreviewPane'
+
+import { tauriAPI } from '@/lib/tauri-adapter'
 
 interface FileData {
   path: string
@@ -66,30 +68,6 @@ interface SearchResult {
   score: number
 }
 
-interface ElectronAPI {
-  selectFolder: () => Promise<string | null>
-  scanFolder: (folderPath: string) => Promise<{ success: boolean; files?: FileData[]; error?: string }>
-  searchFiles: (query: string, folderPath: string) => Promise<{ success: boolean; results?: SearchResult[]; error?: string }>
-  extractContent: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>
-  startWatching: (folderPath: string) => Promise<void>
-  stopWatching: () => Promise<void>
-  openFile: (filePath: string) => Promise<void>
-  openFileLocation: (filePath: string) => Promise<void>
-  deleteFile: (filePath: string) => Promise<{ success: boolean; error?: string }>
-  onFileAdded: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
-  onFileUpdated: (callback: (event: any, data: { filePath: string; content: string }) => void) => void
-  onFileRemoved: (callback: (event: any, data: { filePath: string }) => void) => void
-  onIndexingStatus: (callback: (event: any, data: { isIndexing: boolean; message?: string }) => void) => void
-  onIndexingProgress: (callback: (event: any, data: { current: number; total: number; filename: string }) => void) => void
-  removeAllListeners: (channel: string) => void
-}
-
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI
-  }
-}
-
 interface SearchHistoryItem {
   query: string
   timestamp: number
@@ -97,12 +75,13 @@ interface SearchHistoryItem {
 }
 
 export default function Home() {
-  const [isElectron, setIsElectron] = useState(false)
+  const [isElectron, setIsElectron] = useState(true) // Always true for Tauri app context
   const [isMounted, setIsMounted] = useState(false)
   const [activeTab, setActiveTab] = useState("search")
 
   // App State
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
+  const [indexedFolders, setIndexedFolders] = useState<string[]>([])
   const [files, setFiles] = useState<FileData[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
@@ -150,10 +129,11 @@ export default function Home() {
   const [fileToDelete, setFileToDelete] = useState<string | null>(null)
 
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const progressInterval = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     setIsMounted(true)
-    setIsElectron(typeof window !== 'undefined' && !!window.electronAPI)
+    setIsElectron(true)
     const savedDarkMode = localStorage.getItem('darkMode') === 'true'
     setIsDarkMode(savedDarkMode)
     if (savedDarkMode) document.documentElement.classList.add('dark')
@@ -174,35 +154,33 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (window.electronAPI) {
-      window.electronAPI.onIndexingStatus((event: any, data: { isIndexing: boolean; message?: string }) => {
-        setIsIndexing(data.isIndexing)
-        if (data.isIndexing) {
-          setLoadingMessage(data.message || 'Indexing files for instant search...')
-          setShowLoadingOverlay(true)
-          setScanProgress(0) // Reset progress on start
-        } else {
-          setShowLoadingOverlay(false)
-        }
-      })
-
-      window.electronAPI.onIndexingProgress((event: any, data: { current: number; total: number; filename: string }) => {
-        const percentage = Math.round((data.current / data.total) * 100)
-        setScanProgress(percentage)
-        setLoadingMessage(`Indexing ${data.current}/${data.total}: ${data.filename}`)
-      })
-
-      return () => {
-        window.electronAPI.removeAllListeners('indexing-status')
-        window.electronAPI.removeAllListeners('indexing-progress')
+    tauriAPI.onIndexingStatus((event: any, data: { isIndexing: boolean; message?: string }) => {
+      setIsIndexing(data.isIndexing)
+      if (data.isIndexing) {
+        setLoadingMessage(data.message || 'Indexing files for instant search...')
+        setShowLoadingOverlay(true)
+        setScanProgress(0) // Reset progress on start
+      } else {
+        setShowLoadingOverlay(false)
       }
+    })
+
+    tauriAPI.onIndexingProgress((event: any, data: { current: number; total: number; filename: string }) => {
+      const percentage = Math.round((data.current / data.total) * 100)
+      setScanProgress(percentage)
+      setLoadingMessage(`Indexing ${data.current}/${data.total}: ${data.filename}`)
+    })
+
+    return () => {
+      tauriAPI.removeAllListeners('indexing-status')
+      tauriAPI.removeAllListeners('indexing-progress')
     }
   }, [])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); searchInputRef.current?.focus(); setActiveTab('search') }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'o') { e.preventDefault(); if (window.electronAPI) selectFolder() }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'o') { e.preventDefault(); selectFolder() }
       if ((e.ctrlKey || e.metaKey) && e.key === 'h') { e.preventDefault(); setShowSearchHistory(prev => !prev) }
       if (e.key === 'Escape') { setPreviewOpen(false); setShowShortcuts(false); setShowSearchHistory(false); setShowFilters(false) }
       if ((e.ctrlKey || e.metaKey) && e.key === '/') { e.preventDefault(); setShowShortcuts(prev => !prev) }
@@ -283,13 +261,13 @@ export default function Home() {
   }
 
   const previewFileContent = async (file: FileData) => {
-    if (!window.electronAPI) return
+    setIsLoadingPreview(true)
     setPreviewFile(file)
     setPreviewOpen(true)
-    setIsLoadingPreview(true)
     setPreviewContent('')
+    
     try {
-      const result = await window.electronAPI.extractContent(file.path)
+      const result = await tauriAPI.extractContent(file.path)
       if (result.success) setPreviewContent(result.content || 'No content available')
       else setPreviewContent('Failed to load preview: ' + (result.error || 'Unknown error'))
     } catch (err) {
@@ -301,43 +279,50 @@ export default function Home() {
   }
 
   const scanFolder = useCallback(async (folderPath: string) => {
-    if (!window.electronAPI) return
     setIsScanning(true)
-    setError(null)
-    setScanProgress(0)
     setShowLoadingOverlay(true)
-    setLoadingMessage('Initializing scan...')
-    const progressInterval = setInterval(() => {
-      setScanProgress(prev => {
-        if (prev >= 90) return prev
-        const increment = Math.random() * 15
-        return Math.min(prev + increment, 90)
-      })
-    }, 200)
+    setScanProgress(0)
+    setLoadingProgress(0)
+    setLoadingMessage('Scanning folder for documents...')
+
+    // Simulate progress animation
+    let progress = 0
+    progressInterval.current = setInterval(() => {
+      progress += Math.random() * 10
+      if (progress > 85) progress = 85
+      setScanProgress(progress)
+      setLoadingProgress(progress)
+    }, 300)
+
     try {
-      setLoadingMessage('Scanning folder for documents...')
-      const result = await window.electronAPI.scanFolder(folderPath)
-      clearInterval(progressInterval)
+      const result = await tauriAPI.scanFolder(folderPath)
+      if (progressInterval.current) clearInterval(progressInterval.current)
+
       if (result.success && result.files) {
         setLoadingMessage(`Found ${result.files.length} files! Indexing...`)
         setScanProgress(95)
-        setFiles(result.files)
-        updateStats(result.files)
+        setLoadingProgress(95)
+        
+        // Append new files to existing files (for multi-folder support)
+        setFiles(prevFiles => {
+          // Remove any existing files from this folder to avoid duplicates
+          const otherFiles = prevFiles.filter(f => !f.path.startsWith(folderPath))
+          const allFiles = [...otherFiles, ...result.files]
+          updateStats(allFiles)
+          return allFiles
+        })
+        
         setScanProgress(100)
-        // Loading overlay will be closed by indexing-status event if indexing finishes
-        // But if indexing is already done (fast), we might need to close it here?
-        // Let's rely on the indexing-status event for closing if it's async.
-        // However, scanFolder in electron waits for indexing now?
-        // Wait, in my electron code, scanFolder calls indexFile sequentially.
-        // So when scanFolder returns, indexing IS done.
-        // But I added indexing-status events around it.
-        // So the event listener should handle it.
+        setLoadingProgress(100)
+
+        // Close loading overlay after a brief delay
+        setTimeout(() => setShowLoadingOverlay(false), 500)
       } else {
         setError(result.error || 'Failed to scan folder')
         setShowLoadingOverlay(false)
       }
     } catch (err) {
-      clearInterval(progressInterval)
+      if (progressInterval.current) clearInterval(progressInterval.current)
       setError('Scanning failed')
       console.error(err)
       setShowLoadingOverlay(false)
@@ -347,29 +332,47 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (window.electronAPI) {
-      window.electronAPI.onFileAdded((event, data) => { if (selectedFolder) scanFolder(selectedFolder) })
-      window.electronAPI.onFileUpdated((event, data) => { if (selectedFolder) scanFolder(selectedFolder) })
-      window.electronAPI.onFileRemoved((event, data) => { if (selectedFolder) scanFolder(selectedFolder) })
-      return () => {
-        window.electronAPI.removeAllListeners('file-added')
-        window.electronAPI.removeAllListeners('file-updated')
-        window.electronAPI.removeAllListeners('file-removed')
-      }
+    tauriAPI.onFileAdded((event: any, data: any) => { if (selectedFolder) scanFolder(selectedFolder) })
+    tauriAPI.onFileUpdated((event: any, data: any) => { if (selectedFolder) scanFolder(selectedFolder) })
+    tauriAPI.onFileRemoved((event: any, data: any) => { if (selectedFolder) scanFolder(selectedFolder) })
+    return () => {
+      tauriAPI.removeAllListeners('file-added')
+      tauriAPI.removeAllListeners('file-updated')
+      tauriAPI.removeAllListeners('file-removed')
     }
   }, [selectedFolder, scanFolder])
 
   const selectFolder = async () => {
-    if (!window.electronAPI) { setError('Electron API not available'); return }
     try {
-      const folderPath = await window.electronAPI.selectFolder()
+      const folderPath = await tauriAPI.selectFolder()
       if (folderPath) {
+        // Check if folder is already indexed
+        if (indexedFolders.includes(folderPath)) {
+          setError('This folder is already indexed')
+          return
+        }
         setSelectedFolder(folderPath)
+        setIndexedFolders(prev => [...prev, folderPath])
         setError(null)
         await scanFolder(folderPath)
       }
     } catch (err) {
       setError('Failed to select folder')
+      console.error(err)
+    }
+  }
+
+  const removeFolder = async (folderPath: string) => {
+    try {
+      await tauriAPI.removeFolder(folderPath)
+      setIndexedFolders(prev => prev.filter(f => f !== folderPath))
+      // Remove files from this folder
+      setFiles(prev => prev.filter(f => !f.path.startsWith(folderPath)))
+      if (selectedFolder === folderPath) {
+        setSelectedFolder(indexedFolders.find(f => f !== folderPath) || null)
+      }
+    } catch (err) {
+      setError('Failed to remove folder')
       console.error(err)
     }
   }
@@ -386,33 +389,40 @@ export default function Home() {
   }
 
   const searchFiles = async () => {
-    if (!window.electronAPI || !selectedFolder || !searchQuery.trim()) return
+    if (!searchQuery.trim() || files.length === 0) return
+
+    console.log(`🔎 Searching for "${searchQuery}" in ${files.length} files`)
     setIsSearching(true)
-    setError(null)
-    setLoadingProgress(0)
     setShowLoadingOverlay(true)
-    setLoadingMessage('Searching documents...')
-    const progressInterval = setInterval(() => {
-      setLoadingProgress(prev => {
-        if (prev >= 85) return prev
-        return prev + Math.random() * 20
-      })
-    }, 150)
+    setLoadingProgress(0)
+    setLoadingMessage('Searching through documents...')
+
+    // Simulate progress animation
+    let progress = 0
+    progressInterval.current = setInterval(() => {
+      progress += Math.random() * 15
+      if (progress > 90) progress = 90
+      setLoadingProgress(progress)
+    }, 200)
+
     try {
-      const result = await window.electronAPI.searchFiles(searchQuery, selectedFolder)
-      clearInterval(progressInterval)
+      const result = await tauriAPI.searchFiles(searchQuery, selectedFolder)
+      console.log('🎯 Search result:', result)
+      if (progressInterval.current) clearInterval(progressInterval.current)
       setLoadingProgress(100)
       if (result.success && result.results) {
+        console.log(`✅ Found ${result.results.length} results`, result.results)
         setLoadingMessage(`Found ${result.results.length} results!`)
         setSearchResults(result.results)
         addToSearchHistory(searchQuery, result.results.length)
         setTimeout(() => setShowLoadingOverlay(false), 300)
       } else {
+        console.error('❌ Search failed:', result.error)
         setError(result.error || 'Search failed')
         setShowLoadingOverlay(false)
       }
     } catch (err) {
-      clearInterval(progressInterval)
+      if (progressInterval.current) clearInterval(progressInterval.current)
       setError('Search failed')
       console.error(err)
       setShowLoadingOverlay(false)
@@ -422,13 +432,13 @@ export default function Home() {
   }
 
   const toggleWatching = async () => {
-    if (!window.electronAPI || !selectedFolder) return
+    if (!selectedFolder) return
     try {
       if (isWatching) {
-        await window.electronAPI.stopWatching()
+        await tauriAPI.stopWatching()
         setIsWatching(false)
       } else {
-        await window.electronAPI.startWatching(selectedFolder)
+        await tauriAPI.startWatching(selectedFolder)
         setIsWatching(true)
       }
     } catch (err) {
@@ -461,19 +471,17 @@ export default function Home() {
   }
 
   const openFile = async (filePath: string) => {
-    if (!window.electronAPI?.openFile) { setError('Open file feature not available'); return }
-    try { await window.electronAPI.openFile(filePath) } catch (err) { setError('Failed to open file'); console.error(err) }
+    try { await tauriAPI.openFile(filePath) } catch (err) { setError('Failed to open file'); console.error(err) }
   }
 
   const openFileLocation = async (filePath: string) => {
-    if (!window.electronAPI?.openFileLocation) { setError('Open location feature not available'); return }
-    try { await window.electronAPI.openFileLocation(filePath) } catch (err) { setError('Failed to open file location'); console.error(err) }
+    try { await tauriAPI.openFileLocation(filePath) } catch (err) { setError('Failed to open file location'); console.error(err) }
   }
 
   const handleDeleteFile = async () => {
-    if (!window.electronAPI?.deleteFile || !fileToDelete) return
+    if (!fileToDelete) return
     try {
-      const result = await window.electronAPI.deleteFile(fileToDelete)
+      const result = await tauriAPI.deleteFile(fileToDelete)
       if (result.success) {
         // Remove from local state immediately
         setFiles(prev => prev.filter(f => f.path !== fileToDelete))
@@ -543,11 +551,12 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-2">
-              {selectedFolder && (
-                <Button variant="outline" size="sm" onClick={toggleWatching} className={`gap-2 ${isWatching ? 'bg-emerald-500/10 text-emerald-600 border-emerald-200' : ''}`}>
-                  {isWatching ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  {isWatching ? 'Watching' : 'Watch'}
-                </Button>
+              {/* Status indicator */}
+              {files.length > 0 && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <div className={`h-2 w-2 rounded-full ${isWatching ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/30'}`} />
+                  <span>{files.length} files</span>
+                </div>
               )}
             </div>
           </header>
@@ -556,6 +565,19 @@ export default function Home() {
           <div className="flex-1 overflow-auto p-6">
             <div className="max-w-5xl mx-auto space-y-6">
 
+              {/* Error Alert */}
+              {error && (
+                <Alert variant="destructive" className="animate-in fade-in slide-in-from-top-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="flex items-center justify-between">
+                    <span>{error}</span>
+                    <Button variant="ghost" size="sm" onClick={() => setError(null)} className="h-6 px-2">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* Search View */}
               {activeTab === 'search' && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -563,9 +585,18 @@ export default function Home() {
                   <Card className="glass-card border-none shadow-xl">
                     <CardContent className="p-6 space-y-4">
                       <div className="flex gap-4">
-                        <Button onClick={selectFolder} disabled={isScanning} className="h-12 px-6 text-base shadow-lg shadow-primary/20">
-                          <FolderOpen className="h-5 w-5 mr-2" />
-                          {isScanning ? 'Scanning...' : 'Select Folder'}
+                        <Button onClick={selectFolder} disabled={isScanning} className="h-12 px-6 text-base shadow-lg shadow-primary/20 transition-all hover:scale-105">
+                          {isScanning ? (
+                            <>
+                              <RefreshCw className="h-5 w-5 mr-2 animate-spin" />
+                              Scanning...
+                            </>
+                          ) : (
+                            <>
+                              <FolderOpen className="h-5 w-5 mr-2" />
+                              {indexedFolders.length > 0 ? 'Add Folder' : 'Select Folder'}
+                            </>
+                          )}
                         </Button>
                         <div className="flex-1 relative">
                           <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
@@ -579,12 +610,12 @@ export default function Home() {
                             disabled={files.length === 0 || isScanning}
                           />
                           {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                            <button onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
                               <X className="h-4 w-4" />
                             </button>
                           )}
                         </div>
-                        <Button onClick={searchFiles} disabled={!searchQuery.trim() || files.length === 0} className="h-12 w-12 p-0 rounded-xl">
+                        <Button onClick={searchFiles} disabled={!searchQuery.trim() || files.length === 0} className="h-12 w-12 p-0 rounded-xl transition-all hover:scale-105">
                           {isSearching ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
                         </Button>
                       </div>
@@ -597,32 +628,76 @@ export default function Home() {
                           <span>{files.length} files indexed</span>
                         </div>
                       )}
+
+                      {/* Indexed Folders List */}
+                      {indexedFolders.length > 0 && (
+                        <div className="space-y-2 pt-2 border-t border-border/50">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-muted-foreground">Indexed Folders ({indexedFolders.length})</span>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={selectFolder}
+                              disabled={isScanning}
+                              className="h-7 px-2 text-xs"
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              Add Folder
+                            </Button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {indexedFolders.map((folder) => (
+                              <div 
+                                key={folder}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm"
+                              >
+                                <FolderOpen className="h-3 w-3" />
+                                <span className="truncate max-w-[200px]" title={folder}>
+                                  {folder.split(/[/\\]/).pop()}
+                                </span>
+                                <button
+                                  onClick={() => removeFolder(folder)}
+                                  className="hover:bg-primary/20 rounded-full p-0.5"
+                                  title="Remove folder"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
 
                   {/* Results Area */}
                   {isSearching ? (
-                    <div className="space-y-4">
+                    <div className="space-y-4 animate-in fade-in duration-300">
                       <div className="flex items-center justify-between px-1">
-                        <Skeleton className="h-4 w-32" />
+                        <div className="flex items-center gap-2">
+                          <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                          <span className="text-sm text-muted-foreground">Searching documents...</span>
+                        </div>
                         <Skeleton className="h-8 w-24" />
                       </div>
                       <div className="grid gap-4">
-                        {[1, 2, 3].map((i) => (
-                          <Card key={i} className="border-border/50 bg-card/50 backdrop-blur-sm">
+                        {[1, 2, 3, 4].map((i) => (
+                          <Card key={i} className="border-border/50 bg-card/50 backdrop-blur-sm animate-pulse" style={{ animationDelay: `${i * 100}ms` }}>
                             <CardContent className="p-5">
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center gap-4">
-                                  <Skeleton className="h-10 w-10 rounded-xl" />
+                                  <Skeleton className="h-12 w-12 rounded-xl" />
                                   <div className="space-y-2">
-                                    <Skeleton className="h-5 w-48" />
-                                    <Skeleton className="h-3 w-32" />
+                                    <Skeleton className="h-5 w-56" />
+                                    <Skeleton className="h-3 w-40" />
                                   </div>
                                 </div>
+                                <Skeleton className="h-6 w-16 rounded-full" />
                               </div>
-                              <div className="space-y-2">
+                              <div className="space-y-2 mt-4">
                                 <Skeleton className="h-4 w-full" />
-                                <Skeleton className="h-4 w-3/4" />
+                                <Skeleton className="h-4 w-5/6" />
+                                <Skeleton className="h-4 w-2/3" />
                               </div>
                             </CardContent>
                           </Card>
@@ -630,18 +705,20 @@ export default function Home() {
                       </div>
                     </div>
                   ) : filteredResults.length > 0 ? (
-                    <div className="space-y-4">
+                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
                       <div className="flex items-center justify-between px-1">
-                        <h3 className="text-sm font-medium text-muted-foreground">Found {filteredResults.length} results</h3>
+                        <h3 className="text-sm font-medium text-muted-foreground">
+                          Found <span className="text-foreground font-semibold">{filteredResults.length}</span> results
+                        </h3>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => setShowFilters(!showFilters)} className={showFilters ? 'bg-accent' : ''}>
+                          <Button variant="ghost" size="sm" onClick={() => setShowFilters(!showFilters)} className={`transition-colors ${showFilters ? 'bg-accent' : ''}`}>
                             <Filter className="h-4 w-4 mr-2" /> Filters
                           </Button>
                         </div>
                       </div>
 
                       {showFilters && (
-                        <Card className="glass-card animate-in slide-in-from-top-2">
+                        <Card className="glass-card animate-in slide-in-from-top-2 duration-300">
                           <CardContent className="p-4 grid grid-cols-3 gap-4">
                             <div className="space-y-2">
                               <label className="text-xs font-medium">File Type</label>
@@ -662,35 +739,39 @@ export default function Home() {
 
                       <div className="grid gap-4">
                         {filteredResults.map((result, index) => (
-                          <Card key={index} className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-default">
+                          <Card 
+                            key={index} 
+                            className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-default animate-in fade-in slide-in-from-bottom-2"
+                            style={{ animationDelay: `${Math.min(index * 50, 300)}ms`, animationFillMode: 'both' }}
+                          >
                             <CardContent className="p-5">
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center gap-4">
                                   <div className="p-3 rounded-xl bg-primary/5 group-hover:bg-primary/10 transition-colors">
-                                    {getFileIcon(result.file.type)}
+                                    {getFileIcon(result.file?.type)}
                                   </div>
                                   <div>
-                                    <h4 className="font-semibold text-lg leading-none mb-1 group-hover:text-primary transition-colors">{result.file.name}</h4>
-                                    <p className="text-xs text-muted-foreground font-mono">{result.file.path}</p>
+                                    <h4 className="font-semibold text-lg leading-none mb-1 group-hover:text-primary transition-colors">{result.file?.name}</h4>
+                                    <p className="text-xs text-muted-foreground font-mono truncate max-w-md">{result.file?.path}</p>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <Eye className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file.path)} title="Open" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file?.path)} title="Open" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <ExternalLink className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file.path)} title="Location" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file?.path)} title="Location" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <FolderOpen className="h-4 w-4" />
                                   </Button>
                                 </div>
                               </div>
 
                               <div className="space-y-2 bg-muted/30 rounded-xl p-3 border border-border/10">
-                                {result.matches.slice(0, 2).map((match, i) => (
+                                {(result.matches || []).slice(0, 2).map((match, i) => (
                                   <p key={i} className="text-sm text-muted-foreground leading-relaxed font-mono">
-                                    ...{highlightText(match.context, searchQuery)}...
+                                    ...{highlightText(match?.context || '', searchQuery)}...
                                   </p>
                                 ))}
                               </div>
@@ -823,6 +904,41 @@ export default function Home() {
                           {isRTL ? 'Enabled' : 'Disabled'}
                         </Button>
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="glass-card">
+                    <CardHeader>
+                      <CardTitle>File Watching</CardTitle>
+                      <CardDescription>Automatically detect changes in your indexed folders</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-sm font-medium">Watch for Changes</label>
+                          <p className="text-xs text-muted-foreground max-w-sm">
+                            When enabled, DocuFind will automatically update the search index when files are added, modified, or deleted in your indexed folders.
+                          </p>
+                        </div>
+                        <Button 
+                          variant={isWatching ? "default" : "outline"} 
+                          onClick={toggleWatching}
+                          disabled={indexedFolders.length === 0}
+                          className={`gap-2 transition-all ${isWatching ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
+                        >
+                          {isWatching ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                          {isWatching ? 'Watching' : 'Start Watching'}
+                        </Button>
+                      </div>
+                      {isWatching && (
+                        <div className="text-xs text-emerald-600 flex items-center gap-2 animate-in fade-in">
+                          <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                          Monitoring {indexedFolders.length} folder{indexedFolders.length !== 1 ? 's' : ''} for changes
+                        </div>
+                      )}
+                      {indexedFolders.length === 0 && (
+                        <p className="text-xs text-muted-foreground italic">Add folders to enable file watching</p>
+                      )}
                     </CardContent>
                   </Card>
 
