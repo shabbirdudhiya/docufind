@@ -49,6 +49,7 @@ import { AppSidebar } from '@/components/AppSidebar'
 import { FilePreviewPane } from '@/components/FilePreviewPane'
 
 import { tauriAPI } from '@/lib/tauri-adapter'
+import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
 
 interface FileData {
   path: string
@@ -72,6 +73,32 @@ interface SearchHistoryItem {
   query: string
   timestamp: number
   resultsCount: number
+}
+
+// Elapsed time component that updates every second
+function ElapsedTime({ startTime }: { startTime: Date }) {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [startTime])
+
+  const formatTime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}m ${secs}s`
+  }
+
+  return (
+    <p className="text-xs text-muted-foreground/60 mt-2">
+      Elapsed: {formatTime(elapsed)}
+      {elapsed > 30 && <span className="ml-2 text-yellow-500/80">• Large folder detected</span>}
+    </p>
+  )
 }
 
 export default function Home() {
@@ -104,6 +131,11 @@ export default function Home() {
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false)
+  const [indexingPhase, setIndexingPhase] = useState<'discovering' | 'indexing' | 'finalizing' | ''>('')
+  const [filesProcessed, setFilesProcessed] = useState(0)
+  const [totalFilesToProcess, setTotalFilesToProcess] = useState(0)
+  const [currentFileName, setCurrentFileName] = useState('')
+  const [indexingStartTime, setIndexingStartTime] = useState<Date | null>(null)
 
   // Filters
   const [showFilters, setShowFilters] = useState(false)
@@ -128,6 +160,13 @@ export default function Home() {
   const [confirmClearData, setConfirmClearData] = useState<'history' | 'index' | null>(null)
   const [fileToDelete, setFileToDelete] = useState<string | null>(null)
 
+  // Update state
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null)
+  const [updateDismissed, setUpdateDismissed] = useState(false)
+
   const searchInputRef = useRef<HTMLInputElement>(null)
   const progressInterval = useRef<NodeJS.Timeout | null>(null)
 
@@ -151,6 +190,24 @@ export default function Home() {
     if (savedAutoWatch !== null) setAutoWatch(savedAutoWatch === 'true')
     const savedRTL = localStorage.getItem('isRTL')
     if (savedRTL !== null) setIsRTL(savedRTL === 'true')
+
+    // Check for updates on startup (with small delay to not block UI)
+    const checkUpdates = async () => {
+      try {
+        const info = await checkForUpdates()
+        if (info.available) {
+          setUpdateInfo(info)
+          // Don't show dialog immediately if user dismissed it before in this session
+          const dismissedVersion = sessionStorage.getItem('dismissedUpdateVersion')
+          if (dismissedVersion !== info.version) {
+            setShowUpdateDialog(true)
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check for updates:', e)
+      }
+    }
+    setTimeout(checkUpdates, 2000) // Check after 2 seconds
   }, [])
 
   useEffect(() => {
@@ -160,15 +217,33 @@ export default function Home() {
         setLoadingMessage(data.message || 'Indexing files for instant search...')
         setShowLoadingOverlay(true)
         setScanProgress(0) // Reset progress on start
+        setIndexingStartTime(new Date())
       } else {
         setShowLoadingOverlay(false)
+        setIndexingPhase('')
+        setIndexingStartTime(null)
       }
     })
 
-    tauriAPI.onIndexingProgress((event: any, data: { current: number; total: number; filename: string }) => {
-      const percentage = Math.round((data.current / data.total) * 100)
-      setScanProgress(percentage)
-      setLoadingMessage(`Indexing ${data.current}/${data.total}: ${data.filename}`)
+    tauriAPI.onIndexingProgress((event: any, data: { current: number; total: number; filename: string; phase?: string }) => {
+      const phase = data.phase || 'indexing'
+      setIndexingPhase(phase as 'discovering' | 'indexing' | 'finalizing')
+      setFilesProcessed(data.current)
+      setTotalFilesToProcess(data.total)
+      setCurrentFileName(data.filename)
+      
+      if (phase === 'discovering') {
+        setScanProgress(5) // Show some progress during discovery
+        setLoadingMessage('Discovering files...')
+      } else if (phase === 'finalizing') {
+        setScanProgress(98)
+        setLoadingMessage('Building search index...')
+      } else {
+        // Indexing phase - calculate real percentage
+        const percentage = data.total > 0 ? Math.round((data.current / data.total) * 95) + 3 : 0
+        setScanProgress(Math.min(percentage, 97))
+        setLoadingMessage(`Processing: ${data.filename}`)
+      }
     })
 
     return () => {
@@ -438,12 +513,35 @@ export default function Home() {
         await tauriAPI.stopWatching()
         setIsWatching(false)
       } else {
-        await tauriAPI.startWatching(selectedFolder)
+        await tauriAPI.startWatching()
         setIsWatching(true)
       }
     } catch (err) {
       setError('Failed to toggle file watching')
       console.error(err)
+    }
+  }
+
+  const handleUpdate = async () => {
+    setIsUpdating(true)
+    setUpdateProgress(null)
+    try {
+      await downloadAndInstallUpdate((progress) => {
+        setUpdateProgress(progress)
+      })
+      // App will restart automatically after update
+    } catch (err) {
+      console.error('Update failed:', err)
+      setError('Failed to install update. Please try again later.')
+      setIsUpdating(false)
+    }
+  }
+
+  const dismissUpdate = () => {
+    setShowUpdateDialog(false)
+    setUpdateDismissed(true)
+    if (updateInfo?.version) {
+      sessionStorage.setItem('dismissedUpdateVersion', updateInfo.version)
     }
   }
 
@@ -1097,25 +1195,52 @@ export default function Home() {
 
               <div className="space-y-2 w-full">
                 <h3 className="text-xl font-bold tracking-tight">
-                  {isScanning ? 'Building Search Index' : 'Searching...'}
+                  {isScanning ? (
+                    indexingPhase === 'discovering' ? 'Discovering Files' :
+                    indexingPhase === 'finalizing' ? 'Finalizing Index' :
+                    'Building Search Index'
+                  ) : 'Searching...'}
                 </h3>
                 {isScanning && (
                   <p className="text-sm text-muted-foreground font-medium text-primary/80">
-                    This process only happens once
+                    {indexingPhase === 'discovering' ? 'Scanning folder structure...' :
+                     indexingPhase === 'finalizing' ? 'Almost done!' :
+                     'This process only happens once'}
                   </p>
                 )}
               </div>
 
               <div className="w-full space-y-3">
+                {/* Progress stats row */}
                 <div className="flex justify-between text-xs text-muted-foreground font-mono px-1">
-                  <span>{loadingMessage.split(':')[0]}</span>
-                  <span>{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
+                  <span className="flex items-center gap-1">
+                    {isScanning && totalFilesToProcess > 0 && (
+                      <span className="text-primary font-semibold">{filesProcessed}/{totalFilesToProcess} files</span>
+                    )}
+                    {isScanning && totalFilesToProcess === 0 && indexingPhase === 'discovering' && (
+                      <span className="animate-pulse">Scanning...</span>
+                    )}
+                    {!isScanning && <span>{loadingMessage.split(':')[0]}</span>}
+                  </span>
+                  <span className="font-semibold">{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
                 </div>
-                <Progress value={isScanning ? scanProgress : loadingProgress} className="h-2 w-full" />
-                {isScanning && loadingMessage.includes(':') && (
-                  <p className="text-xs text-muted-foreground/70 truncate max-w-[300px] mx-auto h-4">
-                    {loadingMessage.split(':')[1]}
-                  </p>
+                
+                {/* Progress bar */}
+                <Progress value={isScanning ? scanProgress : loadingProgress} className="h-2.5 w-full" />
+                
+                {/* Current file being processed */}
+                {isScanning && currentFileName && indexingPhase === 'indexing' && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground/80 px-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                    <p className="truncate max-w-[320px]" title={currentFileName}>
+                      {currentFileName}
+                    </p>
+                  </div>
+                )}
+                
+                {/* Elapsed time for long operations */}
+                {isScanning && indexingStartTime && (
+                  <ElapsedTime startTime={indexingStartTime} />
                 )}
               </div>
             </CardContent>
@@ -1182,6 +1307,107 @@ export default function Home() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Update Available Dialog */}
+      <Dialog open={showUpdateDialog} onOpenChange={setShowUpdateDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Download className="h-5 w-5 text-green-500" />
+              Update Available!
+            </DialogTitle>
+            <DialogDescription>
+              A new version of DocuFind is ready to install.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {updateInfo && (
+              <>
+                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <span className="text-sm text-muted-foreground">New Version</span>
+                  <Badge variant="secondary" className="font-mono">
+                    v{updateInfo.version}
+                  </Badge>
+                </div>
+                
+                {updateInfo.body && (
+                  <div className="space-y-2">
+                    <span className="text-sm font-medium">What's New:</span>
+                    <div className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg max-h-32 overflow-y-auto">
+                      {updateInfo.body}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {isUpdating && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {updateProgress ? 'Downloading...' : 'Preparing...'}
+                  </span>
+                  <span className="font-mono">
+                    {updateProgress ? `${updateProgress.percentage}%` : '...'}
+                  </span>
+                </div>
+                <Progress value={updateProgress?.percentage || 0} className="h-2" />
+                {updateProgress && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    {(updateProgress.downloaded / 1024 / 1024).toFixed(1)} MB / {(updateProgress.total / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            <Button 
+              variant="outline" 
+              onClick={dismissUpdate}
+              disabled={isUpdating}
+            >
+              Later
+            </Button>
+            <Button 
+              onClick={handleUpdate}
+              disabled={isUpdating}
+              className="gap-2"
+            >
+              {isUpdating ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Update Now
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Update Available Banner (shows after dismissing dialog) */}
+      {updateInfo?.available && updateDismissed && !showUpdateDialog && (
+        <div 
+          className="fixed bottom-4 right-4 z-40 cursor-pointer"
+          onClick={() => setShowUpdateDialog(true)}
+        >
+          <Card className="bg-green-500/10 border-green-500/30 hover:bg-green-500/20 transition-colors">
+            <CardContent className="p-3 flex items-center gap-3">
+              <Download className="h-4 w-4 text-green-500" />
+              <span className="text-sm font-medium">
+                Update v{updateInfo.version} available
+              </span>
+              <Badge variant="outline" className="text-xs">Click to install</Badge>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </SidebarProvider>
   )
 }

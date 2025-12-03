@@ -52,6 +52,14 @@ const emit = (event: string, data: any) => {
 
 // Setup Tauri event listeners
 let fileChangedUnlisten: (() => void) | null = null;
+let indexingProgressUnlisten: (() => void) | null = null;
+
+interface IndexingProgressPayload {
+  current: number;
+  total: number;
+  filename: string;
+  phase: string; // "discovering" | "indexing" | "finalizing"
+}
 
 const setupTauriListeners = async () => {
   // Skip on server-side rendering
@@ -70,6 +78,14 @@ const setupTauriListeners = async () => {
         } else if (type === "removed") {
           emit("file-removed", { filePath: path });
         }
+      }
+    );
+
+    // Listen for indexing progress events from Rust backend
+    indexingProgressUnlisten = await listen<IndexingProgressPayload>(
+      "indexing-progress",
+      (event) => {
+        emit("indexing-progress", event.payload);
       }
     );
   } catch (e) {

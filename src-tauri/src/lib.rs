@@ -109,25 +109,70 @@ impl Default for AppState {
     }
 }
 
+/// Progress event payload for frontend
+#[derive(Debug, Serialize, Clone)]
+struct IndexingProgress {
+    current: usize,
+    total: usize,
+    filename: String,
+    phase: String, // "discovering", "indexing", "finalizing"
+}
+
 /// Scan a single folder and add to index (supports multiple folders)
 #[tauri::command]
-async fn scan_folder(path: String, state: State<'_, AppState>) -> Result<Vec<FileData>, String> {
+async fn scan_folder(path: String, state: State<'_, AppState>, app: AppHandle) -> Result<Vec<FileData>, String> {
     println!("🔍 Scanning folder: {}", path);
 
-    let new_files: Vec<FileData> = WalkDir::new(&path)
+    // Phase 1: Discover all files first (quick)
+    let _ = app.emit("indexing-progress", IndexingProgress {
+        current: 0,
+        total: 0,
+        filename: "Discovering files...".to_string(),
+        phase: "discovering".to_string(),
+    });
+
+    // Collect all valid file entries first
+    let file_entries: Vec<_> = WalkDir::new(&path)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .par_bridge()
+        .filter(|entry| {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            // Skip hidden and temp files
+            if file_name.starts_with('.') || file_name.starts_with("~$") {
+                return false;
+            }
+            // Only include supported extensions
+            if let Some(ext) = entry.path().extension() {
+                let ext_str = ext.to_str().unwrap_or("").to_lowercase();
+                return ["docx", "pptx", "txt", "md"].contains(&ext_str.as_str());
+            }
+            false
+        })
+        .collect();
+
+    let total_files = file_entries.len();
+    println!("📁 Found {} files to index", total_files);
+
+    let _ = app.emit("indexing-progress", IndexingProgress {
+        current: 0,
+        total: total_files,
+        filename: format!("Found {} documents to index", total_files),
+        phase: "indexing".to_string(),
+    });
+
+    // Phase 2: Process files with progress tracking
+    // Use atomic counter for thread-safe progress tracking
+    let progress_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let last_emitted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app_handle = app.clone();
+    let total_for_closure = total_files;
+
+    let new_files: Vec<FileData> = file_entries
+        .par_iter()
         .filter_map(|entry| {
             let file_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-
-            // Skip hidden and temp files
-            if file_name.starts_with('.') || file_name.starts_with("~$") {
-                return None;
-            }
-
             let ext = file_path.extension()?.to_str()?.to_lowercase();
 
             let file_type = match ext.as_str() {
@@ -150,6 +195,22 @@ async fn scan_folder(path: String, state: State<'_, AppState>) -> Result<Vec<Fil
 
             let content = extract_content(file_path, &ext).unwrap_or_default();
 
+            // Update progress counter
+            let current = progress_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            
+            // Emit progress every ~2% or at least every 10 files to avoid flooding
+            let emit_threshold = std::cmp::max(1, total_for_closure / 50);
+            let last = last_emitted.load(std::sync::atomic::Ordering::SeqCst);
+            if current - last >= emit_threshold || current == total_for_closure {
+                last_emitted.store(current, std::sync::atomic::Ordering::SeqCst);
+                let _ = app_handle.emit("indexing-progress", IndexingProgress {
+                    current,
+                    total: total_for_closure,
+                    filename: file_name.clone(),
+                    phase: "indexing".to_string(),
+                });
+            }
+
             Some(FileData {
                 path: path_str,
                 name: file_name,
@@ -160,6 +221,14 @@ async fn scan_folder(path: String, state: State<'_, AppState>) -> Result<Vec<Fil
             })
         })
         .collect();
+
+    // Phase 3: Finalizing
+    let _ = app.emit("indexing-progress", IndexingProgress {
+        current: total_files,
+        total: total_files,
+        filename: "Building search index...".to_string(),
+        phase: "finalizing".to_string(),
+    });
 
     println!(
         "✅ Scan complete: {} files found in {}",
