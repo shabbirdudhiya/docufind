@@ -45,7 +45,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyNjhGRDFFMTBBRUVFOTYKUldTVzdxNFFIdjFvMGkxVVRiUjBRZG5rWEJzc2JrSC9IL29QK3BOaHAzeVROT1FPOUxGTHROU0wK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM4QjNGNzBEMkJCQTY3NDIKUldSQ1o3b3JEZmV6T0ZXb3VSRktnQjdVN3k4VXBYT1VwYkdQaUhha3AzakdGWEw3cjNmODQ1alcK",
       "endpoints": [
         "https://github.com/shabbirdudhiya/docufind/releases/latest/download/latest.json"
       ],
