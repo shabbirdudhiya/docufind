@@ -47,10 +47,46 @@ export function FilePreviewPane({
     }, [file, searchQuery])
 
     // Count matches and scroll to first match
+    // Helper to extract terms for match counting
+    const getSearchRegex = (query: string): RegExp | null => {
+        const terms: string[] = []
+        
+        // Extract exact phrases (quoted strings)
+        const phraseMatches = query.match(/"([^"]+)"/g)
+        if (phraseMatches) {
+            phraseMatches.forEach(match => {
+                terms.push(match.replace(/"/g, ''))
+            })
+        }
+        
+        // Remove quotes and operators, then extract remaining words
+        let remaining = query
+            .replace(/"[^"]+"/g, '')
+            .replace(/\b(AND|OR|NOT)\b/gi, '')
+            .replace(/[+\-*?:]/g, ' ')
+            .trim()
+        
+        remaining.split(/\s+/).forEach(word => {
+            if (word && word.length > 1) {
+                terms.push(word)
+            }
+        })
+        
+        if (terms.length === 0) return null
+        
+        const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        return new RegExp(`(${escapedTerms.join('|')})`, 'gi')
+    }
+
     useEffect(() => {
         if (!content || !searchQuery) return
 
-        const regex = new RegExp(`(${searchQuery})`, 'gi')
+        const regex = getSearchRegex(searchQuery)
+        if (!regex) {
+            setTotalMatches(0)
+            return
+        }
+        
         const matches = content.match(regex)
         const count = matches ? matches.length : 0
         setTotalMatches(count)
@@ -97,11 +133,46 @@ export function FilePreviewPane({
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
     }
 
+    // Extract searchable terms from an advanced query (removes operators, extracts phrases and words)
+    const extractSearchTerms = (query: string): string[] => {
+        const terms: string[] = []
+        
+        // Extract exact phrases (quoted strings)
+        const phraseMatches = query.match(/"([^"]+)"/g)
+        if (phraseMatches) {
+            phraseMatches.forEach(match => {
+                terms.push(match.replace(/"/g, ''))
+            })
+        }
+        
+        // Remove quotes and operators, then extract remaining words
+        let remaining = query
+            .replace(/"[^"]+"/g, '') // Remove quoted phrases
+            .replace(/\b(AND|OR|NOT)\b/gi, '') // Remove operators
+            .replace(/[+\-*?:]/g, ' ') // Remove special chars
+            .trim()
+        
+        // Add individual words (filter out empty strings)
+        remaining.split(/\s+/).forEach(word => {
+            if (word && word.length > 1) {
+                terms.push(word)
+            }
+        })
+        
+        return terms
+    }
+
     const renderContent = () => {
         if (!content) return null
         if (!searchQuery) return content
 
-        const regex = new RegExp(`(${searchQuery})`, 'gi')
+        // Extract actual search terms from the query
+        const terms = extractSearchTerms(searchQuery)
+        if (terms.length === 0) return content
+        
+        // Create regex pattern that matches any of the terms
+        const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
         const parts = content.split(regex)
         let matchCount = 0
 

@@ -560,10 +560,47 @@ export default function Home() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
+  // Extract searchable terms from an advanced query (removes operators, extracts phrases and words)
+  const extractSearchTerms = (query: string): string[] => {
+    const terms: string[] = []
+    
+    // Extract exact phrases (quoted strings)
+    const phraseMatches = query.match(/"([^"]+)"/g)
+    if (phraseMatches) {
+      phraseMatches.forEach(match => {
+        terms.push(match.replace(/"/g, ''))
+      })
+    }
+    
+    // Remove quotes and operators, then extract remaining words
+    let remaining = query
+      .replace(/"[^"]+"/g, '') // Remove quoted phrases
+      .replace(/\b(AND|OR|NOT)\b/gi, '') // Remove operators
+      .replace(/[+\-*?:]/g, ' ') // Remove special chars
+      .trim()
+    
+    // Add individual words (filter out empty strings)
+    remaining.split(/\s+/).forEach(word => {
+      if (word && word.length > 1) {
+        terms.push(word)
+      }
+    })
+    
+    return terms
+  }
+
   const highlightText = (text: string, query: string) => {
     if (!query) return text
-    const regex = new RegExp(`(${query})`, 'gi')
+    
+    // Extract actual search terms from the query
+    const terms = extractSearchTerms(query)
+    if (terms.length === 0) return text
+    
+    // Create regex pattern that matches any of the terms
+    const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
     const parts = text.split(regex)
+    
     return parts.map((part, i) =>
       regex.test(part) ? <mark key={i} className="bg-yellow-200 dark:bg-yellow-500/40 px-1 rounded text-black dark:text-white font-medium">{part}</mark> : part
     )
@@ -884,8 +921,9 @@ export default function Home() {
                         {filteredResults.map((result, index) => (
                           <Card 
                             key={index} 
-                            className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-default animate-in fade-in slide-in-from-bottom-2"
+                            className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-pointer animate-in fade-in slide-in-from-bottom-2"
                             style={{ animationDelay: `${Math.min(index * 50, 300)}ms`, animationFillMode: 'both' }}
+                            onClick={() => previewFileContent(result.file)}
                           >
                             <CardContent className="p-5">
                               <div className="flex items-start justify-between mb-4">
@@ -898,14 +936,11 @@ export default function Home() {
                                     <p className="text-xs text-muted-foreground font-mono truncate max-w-md">{result.file?.path}</p>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <Button variant="ghost" size="icon" onClick={() => previewFileContent(result.file)} title="Preview" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
-                                    <Eye className="h-4 w-4" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file?.path)} title="Open" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="icon" onClick={() => openFile(result.file?.path)} title="Open in app" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <ExternalLink className="h-4 w-4" />
                                   </Button>
-                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file?.path)} title="Location" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
+                                  <Button variant="ghost" size="icon" onClick={() => openFileLocation(result.file?.path)} title="Show in folder" className="text-muted-foreground hover:bg-primary/10 hover:text-primary">
                                     <FolderOpen className="h-4 w-4" />
                                   </Button>
                                 </div>
