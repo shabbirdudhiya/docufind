@@ -48,3 +48,9 @@ test
 prompt
 
 server.log
+
+# Signing keys (NEVER commit these!)
+*.key
+*.key.pub
+generate-keys.ps1
+password-input.bat

@@ -548,6 +548,15 @@ async fn search_index(
 }
 
 /// Search using Tantivy's full-text search (good for English/Latin)
+/// 
+/// Supported query syntax:
+/// - Simple terms: `hello world` (implicit OR)
+/// - AND: `hello AND world` or `+hello +world`
+/// - OR: `hello OR world`
+/// - Exact phrase: `"hello world"`
+/// - Exclude: `-unwanted` or `NOT unwanted`
+/// - Wildcard: `hel*` (prefix), `h?llo` (single char)
+/// - Field-specific: `name:report` or `content:budget`
 fn search_with_tantivy(
     query: &str,
     state: &State<'_, AppState>,
@@ -565,13 +574,26 @@ fn search_with_tantivy(
     // Create query parser that searches both name and content
     let query_parser = QueryParser::for_index(&state.tantivy_index, vec![name_field, content_field]);
     
-    // Try parsing query - avoid fuzzy for non-ASCII
+    // Detect if the query uses advanced syntax (AND, OR, NOT, quotes, wildcards, field:, +, -)
+    let uses_advanced_syntax = query.contains(" AND ") 
+        || query.contains(" OR ") 
+        || query.contains(" NOT ")
+        || query.contains('"')
+        || query.contains('*')
+        || query.contains('?')
+        || query.contains(':')
+        || query.starts_with('+')
+        || query.starts_with('-')
+        || query.contains(" +")
+        || query.contains(" -");
+    
+    // Try parsing query - avoid fuzzy for non-ASCII or advanced queries
     let has_non_ascii = query.chars().any(|c| !c.is_ascii());
-    let tantivy_query = if has_non_ascii {
-        // For Arabic/non-Latin, use simple query without fuzzy
+    let tantivy_query = if has_non_ascii || uses_advanced_syntax {
+        // For Arabic/non-Latin or advanced queries, parse as-is
         query_parser.parse_query(query)
     } else {
-        // For ASCII text, try fuzzy matching
+        // For simple ASCII text, try fuzzy matching for typo tolerance
         query_parser
             .parse_query(&format!("{}~1", query))
             .or_else(|_| query_parser.parse_query(query))
@@ -653,6 +675,7 @@ fn search_with_tantivy(
 }
 
 /// Direct substring search through all indexed content (for Arabic, Chinese, etc.)
+/// Also supports basic AND/OR operators and exact phrase matching
 fn search_direct_content(
     query_lower: &str,
     state: &State<'_, AppState>,
@@ -660,33 +683,164 @@ fn search_direct_content(
     let index = state.index.read().map_err(|e| e.to_string())?;
     let mut results: Vec<SearchResult> = Vec::new();
     
+    // Parse the query for operators
+    let parsed_query = parse_simple_query(query_lower);
+    
     for file in index.iter() {
         let content_lower = file.content.to_lowercase();
         let name_lower = file.name.to_lowercase();
+        let combined = format!("{} {}", name_lower, content_lower);
         
-        // Check if query appears in content or name
-        let in_content = content_lower.contains(query_lower);
-        let in_name = name_lower.contains(query_lower);
-        
-        if in_content || in_name {
-            let matches = find_matches_in_content(&file.content, &file.name, query_lower);
-            
-            // Score based on match count and position
-            let score = if in_name { 2.0 } else { 1.0 } 
-                + (matches.len() as f32 * 0.1);
-            
-            results.push(SearchResult {
-                file: file.clone(),
-                matches,
-                score,
-            });
+        // Check if file matches the parsed query
+        if !matches_parsed_query(&combined, &parsed_query) {
+            continue;
         }
+        
+        // For highlighting, use the first required term or the original query
+        let highlight_term = parsed_query.required_terms.first()
+            .or(parsed_query.optional_terms.first())
+            .map(|s| s.as_str())
+            .unwrap_or(query_lower);
+        
+        let matches = find_matches_in_content(&file.content, &file.name, highlight_term);
+        
+        // Score based on match count and position
+        let in_name = parsed_query.required_terms.iter().any(|t| name_lower.contains(t))
+            || parsed_query.optional_terms.iter().any(|t| name_lower.contains(t));
+        let score = if in_name { 2.0 } else { 1.0 } 
+            + (matches.len() as f32 * 0.1);
+        
+        results.push(SearchResult {
+            file: file.clone(),
+            matches,
+            score,
+        });
     }
     
     // Sort by score descending
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     
     Ok(results.into_iter().take(100).collect())
+}
+
+/// Parsed query structure for direct content search
+struct ParsedQuery {
+    required_terms: Vec<String>,      // AND terms (all must match)
+    optional_terms: Vec<String>,      // OR terms (at least one must match if no required)
+    excluded_terms: Vec<String>,      // NOT terms (must not match)
+    exact_phrases: Vec<String>,       // Exact phrase matches
+}
+
+/// Parse a simple query string into components
+fn parse_simple_query(query: &str) -> ParsedQuery {
+    let mut required = Vec::new();
+    let mut optional = Vec::new();
+    let mut excluded = Vec::new();
+    let mut exact_phrases = Vec::new();
+    
+    // Extract exact phrases first (quoted strings)
+    let mut remaining = query.to_string();
+    let phrase_regex = regex::Regex::new(r#""([^"]+)""#).unwrap();
+    for cap in phrase_regex.captures_iter(query) {
+        if let Some(phrase) = cap.get(1) {
+            exact_phrases.push(phrase.as_str().to_lowercase());
+        }
+    }
+    remaining = phrase_regex.replace_all(&remaining, " ").to_string();
+    
+    // Split by AND/OR keywords
+    let parts: Vec<&str> = remaining.split_whitespace().collect();
+    let mut i = 0;
+    let mut has_and = false;
+    
+    while i < parts.len() {
+        let part = parts[i];
+        
+        if part.eq_ignore_ascii_case("AND") {
+            has_and = true;
+            i += 1;
+            continue;
+        }
+        
+        if part.eq_ignore_ascii_case("OR") {
+            i += 1;
+            continue;
+        }
+        
+        if part.eq_ignore_ascii_case("NOT") || part.starts_with('-') {
+            let term = if part.starts_with('-') {
+                &part[1..]
+            } else if i + 1 < parts.len() {
+                i += 1;
+                parts[i]
+            } else {
+                i += 1;
+                continue;
+            };
+            if !term.is_empty() {
+                excluded.push(term.to_lowercase());
+            }
+            i += 1;
+            continue;
+        }
+        
+        if part.starts_with('+') {
+            let term = &part[1..];
+            if !term.is_empty() {
+                required.push(term.to_lowercase());
+            }
+        } else {
+            optional.push(part.to_lowercase());
+        }
+        
+        i += 1;
+    }
+    
+    // If AND was used anywhere, treat all optional terms as required
+    if has_and {
+        required.extend(optional.drain(..));
+    }
+    
+    // Exact phrases are always required
+    required.extend(exact_phrases.iter().cloned());
+    
+    ParsedQuery {
+        required_terms: required,
+        optional_terms: optional,
+        excluded_terms: excluded,
+        exact_phrases,
+    }
+}
+
+/// Check if text matches the parsed query
+fn matches_parsed_query(text: &str, query: &ParsedQuery) -> bool {
+    // Check excluded terms first
+    for term in &query.excluded_terms {
+        if text.contains(term) {
+            return false;
+        }
+    }
+    
+    // Check exact phrases
+    for phrase in &query.exact_phrases {
+        if !text.contains(phrase) {
+            return false;
+        }
+    }
+    
+    // Check required terms (all must match)
+    for term in &query.required_terms {
+        if !text.contains(term) {
+            return false;
+        }
+    }
+    
+    // If we have optional terms and no required terms, at least one optional must match
+    if query.required_terms.is_empty() && !query.optional_terms.is_empty() {
+        return query.optional_terms.iter().any(|term| text.contains(term));
+    }
+    
+    true
 }
 
 /// Find matches in content and return Match structs with context

@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Search,
   FolderOpen,
@@ -701,17 +702,61 @@ export default function Home() {
                           <Input
                             ref={searchInputRef}
                             placeholder="Search documents... (Ctrl+F)"
-                            className="h-12 pl-12 text-base bg-background/50 border-border/50 focus:bg-background transition-all"
+                            className="h-12 pl-12 pr-12 text-base bg-background/50 border-border/50 focus:bg-background transition-all"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyPress={(e) => e.key === 'Enter' && searchFiles()}
                             disabled={files.length === 0 || isScanning}
                           />
-                          {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
-                              <X className="h-4 w-4" />
-                            </button>
-                          )}
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                            {searchQuery && (
+                              <button onClick={() => setSearchQuery('')} className="text-muted-foreground hover:text-foreground transition-colors p-1">
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button className="text-muted-foreground hover:text-primary transition-colors p-1" title="Search syntax help">
+                                  <HelpCircle className="h-4 w-4" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-80" align="end">
+                                <div className="space-y-3">
+                                  <h4 className="font-semibold text-sm">Advanced Search Syntax</h4>
+                                  <div className="space-y-2 text-xs">
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">word1 AND word2</code>
+                                      <span className="text-muted-foreground">Both terms required</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">word1 OR word2</code>
+                                      <span className="text-muted-foreground">Either term</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">&quot;exact phrase&quot;</code>
+                                      <span className="text-muted-foreground">Exact match</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">-word</code>
+                                      <span className="text-muted-foreground">Exclude term</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">repo*</code>
+                                      <span className="text-muted-foreground">Wildcard prefix</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2">
+                                      <code className="bg-muted px-1.5 py-0.5 rounded font-mono">name:report</code>
+                                      <span className="text-muted-foreground">Search filename</span>
+                                    </div>
+                                  </div>
+                                  <Separator />
+                                  <p className="text-xs text-muted-foreground">
+                                    Example: <code className="bg-muted px-1 rounded">&quot;annual report&quot; AND budget -draft</code>
+                                  </p>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>
                         </div>
                         <Button onClick={searchFiles} disabled={!searchQuery.trim() || files.length === 0} className="h-12 w-12 p-0 rounded-xl transition-all hover:scale-105">
                           {isSearching ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}

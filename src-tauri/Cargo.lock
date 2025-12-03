@@ -101,6 +101,7 @@ dependencies = [
  "notify",
  "opener",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "tantivy",

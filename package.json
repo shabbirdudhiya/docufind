@@ -4,7 +4,23 @@
   "description": "A powerful desktop app for searching through local documents instantly",
   "author": "Shabbir Dudhiya",
   "license": "MIT",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shabbirdudhiya/docufind.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shabbirdudhiya/docufind/issues"
+  },
+  "homepage": "https://github.com/shabbirdudhiya/docufind#readme",
+  "keywords": [
+    "document-search",
+    "desktop-app",
+    "tauri",
+    "rust",
+    "tantivy",
+    "full-text-search",
+    "nextjs"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
