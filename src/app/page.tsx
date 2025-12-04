@@ -1038,6 +1038,45 @@ export default function Home() {
                           Found <span className="text-foreground font-semibold">{filteredResults.length}</span> results
                         </h3>
                         <div className="flex gap-2">
+                          <Popover open={showSearchHistory} onOpenChange={setShowSearchHistory}>
+                            <PopoverTrigger asChild>
+                              <Button variant="ghost" size="sm" className={`transition-colors ${showSearchHistory ? 'bg-accent' : ''}`}>
+                                <History className="h-4 w-4 mr-2" /> History
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-80" align="end">
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="font-semibold text-sm">Recent Searches</h4>
+                                  {searchHistory.length > 0 && (
+                                    <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setSearchHistory([])}>
+                                      Clear
+                                    </Button>
+                                  )}
+                                </div>
+                                {searchHistory.length > 0 ? (
+                                  <div className="space-y-1 max-h-64 overflow-y-auto">
+                                    {searchHistory.slice(0, 10).map((item, idx) => (
+                                      <button
+                                        key={idx}
+                                        className="w-full flex items-center justify-between p-2 rounded-md hover:bg-accent text-sm text-left transition-colors"
+                                        onClick={() => {
+                                          setSearchQuery(item.query)
+                                          setShowSearchHistory(false)
+                                          searchFiles()
+                                        }}
+                                      >
+                                        <span className="truncate flex-1">{item.query}</span>
+                                        <span className="text-xs text-muted-foreground ml-2">{item.resultsCount} results</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground text-center py-4">No recent searches</p>
+                                )}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
                           <Button variant="ghost" size="sm" onClick={() => setShowFilters(!showFilters)} className={`transition-colors ${showFilters ? 'bg-accent' : ''}`}>
                             <Filter className="h-4 w-4 mr-2" /> Filters
                           </Button>
@@ -1055,11 +1094,45 @@ export default function Home() {
                                   <SelectItem value="all">All Types</SelectItem>
                                   <SelectItem value="word">Word</SelectItem>
                                   <SelectItem value="powerpoint">PowerPoint</SelectItem>
+                                  <SelectItem value="pdf">PDF</SelectItem>
+                                  <SelectItem value="excel">Excel</SelectItem>
                                   <SelectItem value="text">Text</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
-                            {/* Add other filters here if needed */}
+                            <div className="space-y-2">
+                              <label className="text-xs font-medium">Date Range</label>
+                              <Select value={filterDateRange} onValueChange={setFilterDateRange}>
+                                <SelectTrigger><SelectValue placeholder="Any time" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="all">Any time</SelectItem>
+                                  <SelectItem value="today">Today</SelectItem>
+                                  <SelectItem value="week">Past week</SelectItem>
+                                  <SelectItem value="month">Past month</SelectItem>
+                                  <SelectItem value="year">Past year</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs font-medium">File Size</label>
+                              <Select 
+                                value={filterMinSize === 0 && filterMaxSize === 100 ? 'all' : 'custom'} 
+                                onValueChange={(val) => {
+                                  if (val === 'all') { setFilterMinSize(0); setFilterMaxSize(100); }
+                                  else if (val === 'small') { setFilterMinSize(0); setFilterMaxSize(1); }
+                                  else if (val === 'medium') { setFilterMinSize(1); setFilterMaxSize(10); }
+                                  else if (val === 'large') { setFilterMinSize(10); setFilterMaxSize(100); }
+                                }}
+                              >
+                                <SelectTrigger><SelectValue placeholder="Any size" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="all">Any size</SelectItem>
+                                  <SelectItem value="small">Small (&lt;1MB)</SelectItem>
+                                  <SelectItem value="medium">Medium (1-10MB)</SelectItem>
+                                  <SelectItem value="large">Large (&gt;10MB)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </CardContent>
                         </Card>
                       )}

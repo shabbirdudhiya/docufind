@@ -7,13 +7,13 @@
 //! - Search history management
 //! - Search filters (date, type, size)
 
-mod tantivy_search;
+pub mod tantivy_search;
 mod direct_search;
 mod query_parser;
 mod history;
 mod filters;
 
-pub use tantivy_search::{create_tantivy_index, search_with_tantivy, TantivyComponents};
+pub use tantivy_search::{create_tantivy_index, search_with_tantivy, TantivyComponents, add_document_to_tantivy, delete_document_from_tantivy};
 pub use direct_search::search_direct_content;
 pub use query_parser::{parse_simple_query, matches_parsed_query, ParsedQuery};
 pub use history::{SearchHistory, MAX_HISTORY_ENTRIES};
