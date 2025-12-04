@@ -36,12 +36,22 @@ pub async fn search_index(
         &state.tantivy_schema,
     )?;
 
-    // If Tantivy found nothing, try direct content search
-    // (better for Arabic, Chinese, other scripts)
-    if results.is_empty() {
-        println!("📝 Tantivy found nothing, trying direct content search...");
-        let files = state.index.read().map_err(|e| e.to_string())?;
-        results = search_direct_content(&query_lower, &files)?;
+    // Also do direct content search for non-Latin scripts (Arabic, Chinese, etc.)
+    // OR if query is simple and we want to catch PDFs that might not be in Tantivy yet
+    let has_non_ascii = query.chars().any(|c| !c.is_ascii());
+    let files = state.index.read().map_err(|e| e.to_string())?;
+    
+    if has_non_ascii || results.is_empty() {
+        println!("📝 Running direct content search (non-ASCII: {}, tantivy results: {})", has_non_ascii, results.len());
+        let direct_results = search_direct_content(&query_lower, &files)?;
+        
+        // Merge results, avoiding duplicates by path
+        let existing_paths: std::collections::HashSet<_> = results.iter().map(|r| r.file.path.clone()).collect();
+        for dr in direct_results {
+            if !existing_paths.contains(&dr.file.path) {
+                results.push(dr);
+            }
+        }
     }
 
     // Filter out results from excluded folders
@@ -64,6 +74,12 @@ pub async fn search_index(
     if let Some(f) = filters {
         results = apply_filters(results, &f);
     }
+
+    // Log result types for debugging
+    let pdf_count = results.iter().filter(|r| r.file.file_type == "pdf").count();
+    let word_count = results.iter().filter(|r| r.file.file_type == "word").count();
+    let total = results.len();
+    println!("📊 Results breakdown: {} total ({} PDF, {} Word, {} other)", total, pdf_count, word_count, total - pdf_count - word_count);
 
     // Add to search history
     {

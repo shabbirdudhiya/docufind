@@ -1838,7 +1838,22 @@ export default function Home() {
 
       {/* PDF Background Processing Indicator */}
       <PdfProgressIndicator 
-        onPdfIndexed={async () => {
+        onPdfIndexed={async (fileData) => {
+          // Add the indexed PDF to local files state immediately
+          if (fileData && fileData.path) {
+            setFiles(prev => {
+              // Don't add duplicates
+              if (prev.some(f => f.path === fileData.path)) return prev;
+              return [...prev, {
+                path: fileData.path,
+                name: fileData.name,
+                size: fileData.size,
+                type: 'pdf' as const,
+                lastModified: new Date(fileData.last_modified || fileData.lastModified || Date.now())
+              }];
+            });
+          }
+          
           // Refresh stats when a PDF is indexed
           const statsResult = await tauriAPI.getIndexStats()
           if (statsResult.success && statsResult.stats) {
@@ -1852,8 +1867,14 @@ export default function Home() {
           }
         }}
         onComplete={async () => {
+          console.log('📄 PDF processing complete, refreshing data...');
+          
+          // Save the index to persist PDFs
+          await tauriAPI.saveIndex()
+          
           // Refresh all data when PDF processing completes
           const statsResult = await tauriAPI.getIndexStats()
+          console.log('📊 Stats after PDF complete:', statsResult);
           if (statsResult.success && statsResult.stats) {
             setStats({
               totalFiles: statsResult.stats.totalFiles,
@@ -1862,6 +1883,13 @@ export default function Home() {
               textFiles: statsResult.stats.textFiles,
               totalSize: statsResult.stats.totalSize
             })
+          }
+          
+          // Also refresh the files list
+          const filesResult = await tauriAPI.getAllFiles()
+          console.log('📁 Files after PDF complete:', filesResult.files?.length);
+          if (filesResult.success && filesResult.files) {
+            setFiles(filesResult.files)
           }
         }}
       />

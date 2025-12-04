@@ -66,6 +66,9 @@ pub fn search_with_tantivy(
     reader: &IndexReader,
     schema: &Schema,
 ) -> Result<Vec<SearchResult>, String> {
+    // Reload the reader to pick up any recently committed docs
+    let _ = reader.reload();
+    
     let searcher = reader.searcher();
     
     let name_field = schema.get_field("name").unwrap();

@@ -234,12 +234,20 @@ fn process_pdf_queue_with_indexing(
 
         // Process the PDF - now returns (Option<FileData>, Option<SkipReason>)
         let (file_data_opt, skip_reason) = process_single_pdf(pdf_path);
+        println!("🔍 PDF processing result for {}: has_data={}, skip_reason={:?}", filename, file_data_opt.is_some(), skip_reason);
         
         match file_data_opt {
             Some(file_data) => {
                 // Add to in-memory index
-                if let Ok(mut idx_guard) = index.write() {
-                    idx_guard.push(file_data.clone());
+                match index.write() {
+                    Ok(mut idx_guard) => {
+                        println!("📄 Adding PDF to in-memory index: {} (content length: {} chars)", file_data.name, file_data.content.len());
+                        idx_guard.push(file_data.clone());
+                        println!("📊 Index now has {} files", idx_guard.len());
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to acquire write lock for index: {}", e);
+                    }
                 }
                 
                 // Add to Tantivy search index
