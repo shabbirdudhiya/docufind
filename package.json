@@ -43,6 +43,7 @@
     "@tauri-apps/plugin-shell": "^2.3.3",
     "@tauri-apps/plugin-updater": "^2.9.0",
     "chokidar": "^4.0.3",
+    "firebase": "^12.6.0",
     "pptx2json": "^0.0.10"
   },
   "devDependencies": {

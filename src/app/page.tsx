@@ -53,6 +53,7 @@ import { FilePreviewPane } from '@/components/FilePreviewPane'
 
 import { tauriAPI } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
+import { initAnalytics, Analytics } from '@/lib/firebase'
 
 interface FileData {
   path: string
@@ -206,6 +207,8 @@ export default function Home() {
           const filesResult = await tauriAPI.getAllFiles()
           if (filesResult.success && filesResult.files) {
             setFiles(filesResult.files)
+            // Track index loaded
+            Analytics.indexLoaded(filesResult.files.length)
           }
           console.log(`✅ Loaded ${result.fileCount} files from ${result.folderCount} folders`)
         } else {
@@ -223,6 +226,12 @@ export default function Home() {
   useEffect(() => {
     setIsMounted(true)
     setIsElectron(true)
+    
+    // Initialize Firebase Analytics
+    initAnalytics().then(() => {
+      Analytics.appLaunched()
+    })
+    
     const savedDarkMode = localStorage.getItem('darkMode') === 'true'
     setIsDarkMode(savedDarkMode)
     if (savedDarkMode) document.documentElement.classList.add('dark')
@@ -461,6 +470,9 @@ export default function Home() {
         setScanProgress(95)
         setLoadingProgress(95)
         
+        // Track folder added analytics
+        Analytics.folderAdded(result.files.length)
+        
         // Append new files to existing files (for multi-folder support)
         setFiles(prevFiles => {
           // Remove any existing files from this folder to avoid duplicates
@@ -573,6 +585,8 @@ export default function Home() {
         setLoadingMessage(`Found ${result.results.length} results!`)
         setSearchResults(result.results)
         addToSearchHistory(searchQuery, result.results.length)
+        // Track search analytics
+        Analytics.searchPerformed(result.results.length, searchQuery.length)
         setTimeout(() => setShowLoadingOverlay(false), 300)
       } else {
         console.error('❌ Search failed:', result.error)
@@ -689,7 +703,12 @@ export default function Home() {
   }
 
   const openFile = async (filePath: string) => {
-    try { await tauriAPI.openFile(filePath) } catch (err) { setError('Failed to open file'); console.error(err) }
+    try { 
+      await tauriAPI.openFile(filePath)
+      // Track file open - extract file type from extension
+      const ext = filePath.split('.').pop()?.toLowerCase() || 'unknown'
+      Analytics.fileOpened(ext)
+    } catch (err) { setError('Failed to open file'); console.error(err) }
   }
 
   const openFileLocation = async (filePath: string) => {
@@ -701,6 +720,8 @@ export default function Home() {
     try {
       const result = await tauriAPI.deleteFile(fileToDelete)
       if (result.success) {
+        // Track file deletion
+        Analytics.fileDeleted()
         // Remove from local state immediately
         setFiles(prev => prev.filter(f => f.path !== fileToDelete))
         setSearchResults(prev => prev.filter(r => r.file.path !== fileToDelete))
