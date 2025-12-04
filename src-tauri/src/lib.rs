@@ -1,18 +1,17 @@
 //! DocuFind - Fast Document Search Engine
 //! 
 //! A Tauri-based desktop application for indexing and searching
-//! documents (DOCX, PPTX, XLSX, PDF, TXT, MD) with blazing fast
+//! documents (DOCX, PPTX, XLSX, TXT, MD) with blazing fast
 //! full-text search powered by Tantivy.
 //! 
 //! ## Architecture
 //! 
 //! - `models` - Data structures (FileData, SearchResult, etc.)
-//! - `extractors` - Document content extraction (docx, pptx, xlsx, pdf, txt)
+//! - `extractors` - Document content extraction (docx, pptx, xlsx, txt)
 //! - `search` - Search functionality (Tantivy, direct search, query parsing)
 //! - `state` - Application state management
 //! - `commands` - Tauri command handlers
 //! - `folders` - Folder tree management for exclusion UI
-//! - `background` - Background PDF processing queue
 
 pub mod models;
 pub mod extractors;
@@ -20,7 +19,6 @@ pub mod search;
 pub mod state;
 pub mod commands;
 pub mod folders;
-pub mod background;
 
 use state::AppState;
 use tauri::Manager;
@@ -44,7 +42,6 @@ pub fn run() {
             commands::scan_folder,
             commands::remove_folder,
             commands::get_indexed_folders,
-            commands::get_pdf_queue_status,
             
             // Search
             commands::search_index,

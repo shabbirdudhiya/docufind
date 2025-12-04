@@ -74,7 +74,7 @@ mod tests {
     fn test_filter_by_type() {
         let results = vec![
             make_result("word", 100),
-            make_result("pdf", 200),
+            make_result("powerpoint", 200),
             make_result("word", 300),
         ];
         

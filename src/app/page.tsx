@@ -51,7 +51,6 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/AppSidebar'
 import { FilePreviewPane } from '@/components/FilePreviewPane'
 import { FolderTree } from '@/components/FolderTree'
-import { PdfProgressIndicator } from '@/components/PdfProgressIndicator'
 
 import { tauriAPI } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
@@ -60,7 +59,7 @@ import { initAnalytics, Analytics } from '@/lib/firebase'
 interface FileData {
   path: string
   name: string
-  type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel'
+  type: 'word' | 'powerpoint' | 'text' | 'excel'
   size: number
   lastModified: Date
 }
@@ -644,11 +643,10 @@ export default function Home() {
     }
   }
 
-  const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel') => {
+  const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'excel') => {
     switch (type) {
       case 'word': return <FileText className="h-4 w-4 text-blue-600" />
       case 'powerpoint': return <FileText className="h-4 w-4 text-orange-600" />
-      case 'pdf': return <FileText className="h-4 w-4 text-red-600" />
       case 'excel': return <FileText className="h-4 w-4 text-green-600" />
       default: return <File className="h-4 w-4 text-gray-600" />
     }
@@ -1094,7 +1092,6 @@ export default function Home() {
                                   <SelectItem value="all">All Types</SelectItem>
                                   <SelectItem value="word">Word</SelectItem>
                                   <SelectItem value="powerpoint">PowerPoint</SelectItem>
-                                  <SelectItem value="pdf">PDF</SelectItem>
                                   <SelectItem value="excel">Excel</SelectItem>
                                   <SelectItem value="text">Text</SelectItem>
                                 </SelectContent>
@@ -1835,64 +1832,6 @@ export default function Home() {
           </Card>
         </div>
       )}
-
-      {/* PDF Background Processing Indicator */}
-      <PdfProgressIndicator 
-        onPdfIndexed={async (fileData) => {
-          // Add the indexed PDF to local files state immediately
-          if (fileData && fileData.path) {
-            setFiles(prev => {
-              // Don't add duplicates
-              if (prev.some(f => f.path === fileData.path)) return prev;
-              return [...prev, {
-                path: fileData.path,
-                name: fileData.name,
-                size: fileData.size,
-                type: 'pdf' as const,
-                lastModified: new Date(fileData.last_modified || fileData.lastModified || Date.now())
-              }];
-            });
-          }
-          
-          // Refresh stats when a PDF is indexed
-          const statsResult = await tauriAPI.getIndexStats()
-          if (statsResult.success && statsResult.stats) {
-            setStats({
-              totalFiles: statsResult.stats.totalFiles,
-              wordFiles: statsResult.stats.wordFiles,
-              powerPointFiles: statsResult.stats.powerPointFiles,
-              textFiles: statsResult.stats.textFiles,
-              totalSize: statsResult.stats.totalSize
-            })
-          }
-        }}
-        onComplete={async () => {
-          console.log('📄 PDF processing complete, refreshing data...');
-          
-          // Save the index to persist PDFs
-          await tauriAPI.saveIndex()
-          
-          // Refresh all data when PDF processing completes
-          const statsResult = await tauriAPI.getIndexStats()
-          console.log('📊 Stats after PDF complete:', statsResult);
-          if (statsResult.success && statsResult.stats) {
-            setStats({
-              totalFiles: statsResult.stats.totalFiles,
-              wordFiles: statsResult.stats.wordFiles,
-              powerPointFiles: statsResult.stats.powerPointFiles,
-              textFiles: statsResult.stats.textFiles,
-              totalSize: statsResult.stats.totalSize
-            })
-          }
-          
-          // Also refresh the files list
-          const filesResult = await tauriAPI.getAllFiles()
-          console.log('📁 Files after PDF complete:', filesResult.files?.length);
-          if (filesResult.success && filesResult.files) {
-            setFiles(filesResult.files)
-          }
-        }}
-      />
     </SidebarProvider>
   )
 }

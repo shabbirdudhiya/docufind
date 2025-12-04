@@ -37,7 +37,7 @@ pub async fn search_index(
     )?;
 
     // Also do direct content search for non-Latin scripts (Arabic, Chinese, etc.)
-    // OR if query is simple and we want to catch PDFs that might not be in Tantivy yet
+    // OR if Tantivy didn't find results
     let has_non_ascii = query.chars().any(|c| !c.is_ascii());
     let files = state.index.read().map_err(|e| e.to_string())?;
     
@@ -76,10 +76,10 @@ pub async fn search_index(
     }
 
     // Log result types for debugging
-    let pdf_count = results.iter().filter(|r| r.file.file_type == "pdf").count();
     let word_count = results.iter().filter(|r| r.file.file_type == "word").count();
+    let pptx_count = results.iter().filter(|r| r.file.file_type == "powerpoint").count();
     let total = results.len();
-    println!("📊 Results breakdown: {} total ({} PDF, {} Word, {} other)", total, pdf_count, word_count, total - pdf_count - word_count);
+    println!("📊 Results breakdown: {} total ({} Word, {} PowerPoint, {} other)", total, word_count, pptx_count, total - word_count - pptx_count);
 
     // Add to search history
     {
@@ -126,11 +126,9 @@ pub async fn remove_from_search_history(
 pub async fn get_index_stats(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let index = state.index.read().map_err(|e| e.to_string())?;
     let folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
-    let pdf_status = state.pdf_queue.status();
 
     let word_count = index.iter().filter(|f| f.file_type == "word").count();
     let pptx_count = index.iter().filter(|f| f.file_type == "powerpoint").count();
-    let pdf_count = index.iter().filter(|f| f.file_type == "pdf").count();
     let excel_count = index.iter().filter(|f| f.file_type == "excel").count();
     let text_count = index.iter().filter(|f| f.file_type == "text").count();
     let total_size: u64 = index.iter().map(|f| f.size).sum();
@@ -139,12 +137,10 @@ pub async fn get_index_stats(state: State<'_, AppState>) -> Result<serde_json::V
         "totalFiles": index.len(),
         "wordFiles": word_count,
         "powerPointFiles": pptx_count,
-        "pdfFiles": pdf_count,
         "excelFiles": excel_count,
         "textFiles": text_count,
         "totalSize": total_size,
-        "folderCount": folders.len(),
-        "pdfQueuePending": pdf_status.pending + pdf_status.processing
+        "folderCount": folders.len()
     }))
 }
 

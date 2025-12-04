@@ -315,9 +315,6 @@ pub async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
         }
     }
     
-    // Reset PDF queue
-    state.pdf_queue.reset();
-    
     println!("🧹 Cleared index");
     Ok(())
 }

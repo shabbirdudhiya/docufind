@@ -1,21 +1,16 @@
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
-use tantivy::IndexWriter;
 use walkdir::WalkDir;
 
-use crate::extractors::{extract_content, get_file_type, is_fast_extension, PDF_EXTENSION};
+use crate::extractors::{extract_content, get_file_type, is_supported_extension};
 use crate::models::{FileData, FolderInfo, IndexingProgress};
 use crate::search::tantivy_search::add_document_to_tantivy;
 use crate::state::AppState;
 
-/// Scan a folder and index all supported documents
-/// 
-/// Phase 1: Fast indexing of DOCX, PPTX, XLSX, TXT, MD
-/// Phase 2: Queue PDFs for background processing
+/// Scan a folder and index all supported documents (DOCX, PPTX, XLSX, TXT, MD)
 #[tauri::command]
 pub async fn scan_folder(
     path: String,
@@ -35,9 +30,8 @@ pub async fn scan_folder(
         },
     );
 
-    // Collect fast files and PDF files separately
-    let mut fast_entries = Vec::new();
-    let mut pdf_entries = Vec::new();
+    // Collect supported files
+    let mut entries = Vec::new();
 
     for entry in WalkDir::new(&path)
         .into_iter()
@@ -54,38 +48,32 @@ pub async fn scan_folder(
         if let Some(ext) = entry.path().extension() {
             let ext_str = ext.to_str().unwrap_or("").to_lowercase();
 
-            if is_fast_extension(&ext_str) {
-                fast_entries.push(entry);
-            } else if ext_str == PDF_EXTENSION {
-                pdf_entries.push(entry.path().to_path_buf());
+            if is_supported_extension(&ext_str) {
+                entries.push(entry);
             }
         }
     }
 
-    let total_fast = fast_entries.len();
-    let total_pdfs = pdf_entries.len();
-    println!(
-        "📁 Found {} fast files + {} PDFs to index",
-        total_fast, total_pdfs
-    );
+    let total = entries.len();
+    println!("📁 Found {} files to index", total);
 
     let _ = app.emit(
         "indexing-progress",
         IndexingProgress {
             current: 0,
-            total: total_fast,
-            filename: format!("Indexing {} documents...", total_fast),
+            total,
+            filename: format!("Indexing {} documents...", total),
             phase: "indexing".to_string(),
         },
     );
 
-    // Phase 2: Process fast files with progress
+    // Phase 2: Process files with progress
     let progress_counter = Arc::new(AtomicUsize::new(0));
     let last_emitted = Arc::new(AtomicUsize::new(0));
     let app_handle = app.clone();
-    let total_for_closure = total_fast;
+    let total_for_closure = total;
 
-    let new_files: Vec<FileData> = fast_entries
+    let new_files: Vec<FileData> = entries
         .par_iter()
         .filter_map(|entry| {
             let file_path = entry.path();
@@ -133,18 +121,18 @@ pub async fn scan_folder(
         })
         .collect();
 
-    // Phase 3: Finalize fast files
+    // Phase 3: Finalize
     let _ = app.emit(
         "indexing-progress",
         IndexingProgress {
-            current: total_fast,
-            total: total_fast,
+            current: total,
+            total,
             filename: "Building search index...".to_string(),
             phase: "finalizing".to_string(),
         },
     );
 
-    println!("✅ Fast scan complete: {} files in {}", new_files.len(), path);
+    println!("✅ Scan complete: {} files in {}", new_files.len(), path);
 
     // Add folder to watched list
     {
@@ -171,205 +159,10 @@ pub async fn scan_folder(
         writer.commit().map_err(|e| e.to_string())?;
     }
 
-    // Phase 4: Queue PDFs for background processing
-    if !pdf_entries.is_empty() {
-        println!("📄 Queueing {} PDFs for background processing", pdf_entries.len());
-        state.pdf_queue.enqueue_batch(pdf_entries.clone());
-
-        let _ = app.emit(
-            "indexing-progress",
-            IndexingProgress {
-                current: 0,
-                total: total_pdfs,
-                filename: format!("{} PDFs queued for background processing", total_pdfs),
-                phase: "pdf-background".to_string(),
-            },
-        );
-
-        // Start background PDF processing - pass state handles
-        let app_clone = app.clone();
-        let index_clone = Arc::clone(&state.index);
-        let tantivy_writer_clone = Arc::clone(&state.tantivy_writer);
-        let schema_clone = state.tantivy_schema.clone();
-        
-        std::thread::spawn(move || {
-            process_pdf_queue_with_indexing(pdf_entries, app_clone, index_clone, tantivy_writer_clone, schema_clone);
-        });
-    }
-
     // Auto-save
     let _ = crate::commands::persistence::save_index_internal(&state);
 
     Ok(new_files)
-}
-
-/// Process PDF queue with actual indexing into Tantivy and in-memory index
-fn process_pdf_queue_with_indexing(
-    pdf_paths: Vec<PathBuf>, 
-    app: AppHandle,
-    index: Arc<std::sync::RwLock<Vec<FileData>>>,
-    tantivy_writer: Arc<Mutex<IndexWriter>>,
-    schema: tantivy::schema::Schema,
-) {
-    use crate::search::tantivy_search::add_document_to_tantivy;
-    
-    println!("🔄 Background PDF processing started with indexing");
-    let total = pdf_paths.len();
-    let mut indexed_count = 0;
-    let mut skipped_pdfs: Vec<serde_json::Value> = Vec::new();
-    
-    for (idx, pdf_path) in pdf_paths.iter().enumerate() {
-        let filename = pdf_path.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-            
-        let _ = app.emit(
-            "pdf-progress",
-            serde_json::json!({
-                "completed": idx,
-                "total": total,
-                "current": filename.clone(),
-            }),
-        );
-
-        // Process the PDF - now returns (Option<FileData>, Option<SkipReason>)
-        let (file_data_opt, skip_reason) = process_single_pdf(pdf_path);
-        println!("🔍 PDF processing result for {}: has_data={}, skip_reason={:?}", filename, file_data_opt.is_some(), skip_reason);
-        
-        match file_data_opt {
-            Some(file_data) => {
-                // Add to in-memory index
-                match index.write() {
-                    Ok(mut idx_guard) => {
-                        println!("📄 Adding PDF to in-memory index: {} (content length: {} chars)", file_data.name, file_data.content.len());
-                        idx_guard.push(file_data.clone());
-                        println!("📊 Index now has {} files", idx_guard.len());
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Failed to acquire write lock for index: {}", e);
-                    }
-                }
-                
-                // Add to Tantivy search index
-                if let Ok(mut writer) = tantivy_writer.lock() {
-                    if let Err(e) = add_document_to_tantivy(&mut writer, &schema, &file_data) {
-                        eprintln!("Failed to index PDF {}: {}", file_data.name, e);
-                        skipped_pdfs.push(serde_json::json!({
-                            "name": file_data.name,
-                            "path": file_data.path,
-                            "reason": format!("Index error: {}", e)
-                        }));
-                    } else {
-                        indexed_count += 1;
-                        // Commit every 10 PDFs to make them searchable
-                        if indexed_count % 10 == 0 {
-                            let _ = writer.commit();
-                        }
-                    }
-                }
-                
-                // Emit the indexed file to frontend so it can update its state
-                let _ = app.emit("pdf-indexed", serde_json::to_value(&file_data).unwrap_or_default());
-            }
-            None => {
-                // PDF was skipped - record reason
-                let reason = skip_reason.unwrap_or_else(|| "Unknown error".to_string());
-                println!("⚠️ Skipped PDF '{}': {}", filename, reason);
-                
-                skipped_pdfs.push(serde_json::json!({
-                    "name": filename,
-                    "path": pdf_path.to_string_lossy().to_string(),
-                    "reason": reason
-                }));
-                
-                // Emit skipped event so frontend can show it
-                let _ = app.emit("pdf-skipped", serde_json::json!({
-                    "name": filename,
-                    "path": pdf_path.to_string_lossy().to_string(),
-                    "reason": reason
-                }));
-            }
-        }
-
-        // Small delay to prevent CPU thrashing
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    // Final commit
-    if let Ok(mut writer) = tantivy_writer.lock() {
-        let _ = writer.commit();
-    }
-
-    let skipped_count = skipped_pdfs.len();
-    println!("✅ Background PDF processing complete: {} indexed, {} skipped", indexed_count, skipped_count);
-    
-    // Emit completion with details about skipped PDFs
-    let _ = app.emit("pdf-complete", serde_json::json!({ 
-        "total": total, 
-        "indexed": indexed_count,
-        "skipped": skipped_count,
-        "skippedFiles": skipped_pdfs
-    }));
-}
-
-/// Process a single PDF file - returns (Option<FileData>, Option<SkipReason>)
-fn process_single_pdf(path: &Path) -> (Option<FileData>, Option<String>) {
-    let metadata = match path.metadata() {
-        Ok(m) => m,
-        Err(e) => {
-            return (None, Some(format!("Cannot read file: {}", e)));
-        }
-    };
-    let size = metadata.len();
-
-    if size == 0 {
-        return (None, Some("Empty file".to_string()));
-    }
-
-    let modified: DateTime<Utc> = match metadata.modified() {
-        Ok(m) => m.into(),
-        Err(_) => Utc::now(),
-    };
-    
-    let content = crate::extractors::extract_content(path, "pdf").unwrap_or_default();
-
-    // Skip if no text content (likely scanned/image PDF)
-    if content.trim().is_empty() {
-        return (None, Some("No text found - likely a scanned/image PDF".to_string()));
-    }
-    
-    if content.trim().len() < 50 {
-        return (None, Some(format!("Too little text ({} chars) - likely a scanned/image PDF", content.trim().len())));
-    }
-
-    (Some(FileData {
-        path: path.to_string_lossy().to_string(),
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        size,
-        last_modified: modified,
-        file_type: "pdf".to_string(),
-        content,
-    }), None)
-}
-
-/// Get PDF queue status
-#[tauri::command]
-pub async fn get_pdf_queue_status(
-    state: State<'_, AppState>,
-) -> Result<serde_json::Value, String> {
-    let status = state.pdf_queue.status();
-    Ok(serde_json::json!({
-        "pending": status.pending,
-        "processing": status.processing,
-        "completed": status.completed,
-        "total": status.total,
-        "isRunning": status.is_running,
-        "progressPercent": status.progress_percent(),
-        "isComplete": status.is_complete()
-    }))
 }
 
 /// Remove a folder from the index

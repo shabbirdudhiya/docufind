@@ -41,7 +41,7 @@ pub struct IndexingProgress {
     pub current: usize,
     pub total: usize,
     pub filename: String,
-    pub phase: String, // "discovering", "indexing", "finalizing", "pdf-background"
+    pub phase: String, // "discovering", "indexing", "finalizing"
 }
 
 /// Folder node for hierarchical tree view
@@ -65,7 +65,7 @@ pub struct SearchHistoryEntry {
 /// Search filters for advanced filtering
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SearchFilters {
-    pub file_types: Option<Vec<String>>,      // ["word", "pdf", "powerpoint"]
+    pub file_types: Option<Vec<String>>,      // ["word", "powerpoint", "excel", "text"]
     pub date_from: Option<DateTime<Utc>>,
     pub date_to: Option<DateTime<Utc>>,
     pub min_size: Option<u64>,
@@ -79,10 +79,8 @@ pub struct IndexStats {
     pub total_files: usize,
     pub word_files: usize,
     pub powerpoint_files: usize,
-    pub pdf_files: usize,
     pub excel_files: usize,
     pub text_files: usize,
     pub total_size: u64,
     pub folder_count: usize,
-    pub pdf_queue_pending: usize,
 }

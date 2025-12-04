@@ -4,7 +4,6 @@
 //! - File index (in-memory)
 //! - Tantivy search index
 //! - Folder tracking
-//! - Background PDF processing queue
 //! - Search history
 
 use std::collections::HashSet;
@@ -16,7 +15,6 @@ use tantivy::schema::Schema;
 
 use crate::models::FileData;
 use crate::search::{create_tantivy_index, SearchHistory};
-use crate::background::PdfQueue;
 
 /// Main application state
 pub struct AppState {
@@ -50,9 +48,6 @@ pub struct AppState {
     /// App data directory path
     pub data_dir: Mutex<Option<PathBuf>>,
     
-    /// Background PDF processing queue
-    pub pdf_queue: PdfQueue,
-    
     /// Search history
     pub search_history: Mutex<SearchHistory>,
 }
@@ -72,7 +67,6 @@ impl Default for AppState {
             tantivy_schema: tantivy.schema,
             db: Mutex::new(None),
             data_dir: Mutex::new(None),
-            pdf_queue: PdfQueue::new(),
             search_history: Mutex::new(SearchHistory::new()),
         }
     }

@@ -37,7 +37,6 @@ notify = "8"
 tantivy = "0.22"
 regex = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
-pdf-extract = "0.7"
 
 chrono = { version = "0.4", features = ["serde"] }
 
