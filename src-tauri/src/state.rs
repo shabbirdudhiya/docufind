@@ -8,7 +8,7 @@
 //! - Search history
 
 use std::collections::HashSet;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::path::PathBuf;
 use rusqlite::Connection;
 use tantivy::{Index, IndexReader, IndexWriter};
@@ -21,7 +21,7 @@ use crate::background::PdfQueue;
 /// Main application state
 pub struct AppState {
     /// In-memory file index
-    pub index: RwLock<Vec<FileData>>,
+    pub index: Arc<RwLock<Vec<FileData>>>,
     
     /// Folders being watched/indexed
     pub watched_folders: Mutex<HashSet<String>>,
@@ -38,8 +38,8 @@ pub struct AppState {
     /// Tantivy index reader
     pub tantivy_reader: IndexReader,
     
-    /// Tantivy index writer (mutex for thread safety)
-    pub tantivy_writer: Mutex<IndexWriter>,
+    /// Tantivy index writer (mutex for thread safety) - Arc for sharing across threads
+    pub tantivy_writer: Arc<Mutex<IndexWriter>>,
     
     /// Tantivy schema
     pub tantivy_schema: Schema,
@@ -62,13 +62,13 @@ impl Default for AppState {
         let tantivy = create_tantivy_index();
         
         Self {
-            index: RwLock::new(Vec::new()),
+            index: Arc::new(RwLock::new(Vec::new())),
             watched_folders: Mutex::new(HashSet::new()),
             excluded_folders: Mutex::new(HashSet::new()),
             watcher: Mutex::new(None),
             tantivy_index: tantivy.index,
             tantivy_reader: tantivy.reader,
-            tantivy_writer: Mutex::new(tantivy.writer),
+            tantivy_writer: Arc::new(Mutex::new(tantivy.writer)),
             tantivy_schema: tantivy.schema,
             db: Mutex::new(None),
             data_dir: Mutex::new(None),

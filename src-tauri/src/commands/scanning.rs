@@ -2,8 +2,9 @@ use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, State};
+use tantivy::IndexWriter;
 use walkdir::WalkDir;
 
 use crate::extractors::{extract_content, get_file_type, is_fast_extension, PDF_EXTENSION};
@@ -185,11 +186,14 @@ pub async fn scan_folder(
             },
         );
 
-        // Start background PDF processing in a separate thread
-        // Note: We process PDFs one by one from the queue
+        // Start background PDF processing - pass state handles
         let app_clone = app.clone();
+        let index_clone = Arc::clone(&state.index);
+        let tantivy_writer_clone = Arc::clone(&state.tantivy_writer);
+        let schema_clone = state.tantivy_schema.clone();
+        
         std::thread::spawn(move || {
-            process_pdf_queue_sync(pdf_entries, app_clone);
+            process_pdf_queue_with_indexing(pdf_entries, app_clone, index_clone, tantivy_writer_clone, schema_clone);
         });
     }
 
@@ -199,57 +203,138 @@ pub async fn scan_folder(
     Ok(new_files)
 }
 
-/// Process PDF queue synchronously in background thread
-fn process_pdf_queue_sync(pdf_paths: Vec<PathBuf>, app: AppHandle) {
-    println!("🔄 Background PDF processing started");
+/// Process PDF queue with actual indexing into Tantivy and in-memory index
+fn process_pdf_queue_with_indexing(
+    pdf_paths: Vec<PathBuf>, 
+    app: AppHandle,
+    index: Arc<std::sync::RwLock<Vec<FileData>>>,
+    tantivy_writer: Arc<Mutex<IndexWriter>>,
+    schema: tantivy::schema::Schema,
+) {
+    use crate::search::tantivy_search::add_document_to_tantivy;
+    
+    println!("🔄 Background PDF processing started with indexing");
     let total = pdf_paths.len();
+    let mut indexed_count = 0;
+    let mut skipped_pdfs: Vec<serde_json::Value> = Vec::new();
     
     for (idx, pdf_path) in pdf_paths.iter().enumerate() {
+        let filename = pdf_path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+            
         let _ = app.emit(
             "pdf-progress",
             serde_json::json!({
                 "completed": idx,
                 "total": total,
-                "current": pdf_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                "current": filename.clone(),
             }),
         );
 
-        // Process the PDF - results are emitted to frontend
-        if let Some(file_data) = process_single_pdf(pdf_path) {
-            // Emit the indexed file to frontend so it can update its state
-            let _ = app.emit("pdf-indexed", serde_json::to_value(&file_data).unwrap_or_default());
+        // Process the PDF - now returns (Option<FileData>, Option<SkipReason>)
+        let (file_data_opt, skip_reason) = process_single_pdf(pdf_path);
+        
+        match file_data_opt {
+            Some(file_data) => {
+                // Add to in-memory index
+                if let Ok(mut idx_guard) = index.write() {
+                    idx_guard.push(file_data.clone());
+                }
+                
+                // Add to Tantivy search index
+                if let Ok(mut writer) = tantivy_writer.lock() {
+                    if let Err(e) = add_document_to_tantivy(&mut writer, &schema, &file_data) {
+                        eprintln!("Failed to index PDF {}: {}", file_data.name, e);
+                        skipped_pdfs.push(serde_json::json!({
+                            "name": file_data.name,
+                            "path": file_data.path,
+                            "reason": format!("Index error: {}", e)
+                        }));
+                    } else {
+                        indexed_count += 1;
+                        // Commit every 10 PDFs to make them searchable
+                        if indexed_count % 10 == 0 {
+                            let _ = writer.commit();
+                        }
+                    }
+                }
+                
+                // Emit the indexed file to frontend so it can update its state
+                let _ = app.emit("pdf-indexed", serde_json::to_value(&file_data).unwrap_or_default());
+            }
+            None => {
+                // PDF was skipped - record reason
+                let reason = skip_reason.unwrap_or_else(|| "Unknown error".to_string());
+                println!("⚠️ Skipped PDF '{}': {}", filename, reason);
+                
+                skipped_pdfs.push(serde_json::json!({
+                    "name": filename,
+                    "path": pdf_path.to_string_lossy().to_string(),
+                    "reason": reason
+                }));
+                
+                // Emit skipped event so frontend can show it
+                let _ = app.emit("pdf-skipped", serde_json::json!({
+                    "name": filename,
+                    "path": pdf_path.to_string_lossy().to_string(),
+                    "reason": reason
+                }));
+            }
         }
 
         // Small delay to prevent CPU thrashing
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    println!("✅ Background PDF processing complete");
-    let _ = app.emit("pdf-complete", serde_json::json!({ "total": total }));
+    // Final commit
+    if let Ok(mut writer) = tantivy_writer.lock() {
+        let _ = writer.commit();
+    }
+
+    let skipped_count = skipped_pdfs.len();
+    println!("✅ Background PDF processing complete: {} indexed, {} skipped", indexed_count, skipped_count);
+    
+    // Emit completion with details about skipped PDFs
+    let _ = app.emit("pdf-complete", serde_json::json!({ 
+        "total": total, 
+        "indexed": indexed_count,
+        "skipped": skipped_count,
+        "skippedFiles": skipped_pdfs
+    }));
 }
 
-/// Process a single PDF file
-fn process_single_pdf(path: &Path) -> Option<FileData> {
-    let metadata = path.metadata().ok()?;
+/// Process a single PDF file - returns (Option<FileData>, Option<SkipReason>)
+fn process_single_pdf(path: &Path) -> (Option<FileData>, Option<String>) {
+    let metadata = match path.metadata() {
+        Ok(m) => m,
+        Err(e) => {
+            return (None, Some(format!("Cannot read file: {}", e)));
+        }
+    };
     let size = metadata.len();
 
     if size == 0 {
-        return None;
+        return (None, Some("Empty file".to_string()));
     }
 
-    let modified: DateTime<Utc> = metadata.modified().ok()?.into();
+    let modified: DateTime<Utc> = match metadata.modified() {
+        Ok(m) => m.into(),
+        Err(_) => Utc::now(),
+    };
+    
     let content = crate::extractors::extract_content(path, "pdf").unwrap_or_default();
 
     // Skip if no text content (likely scanned/image PDF)
+    if content.trim().is_empty() {
+        return (None, Some("No text found - likely a scanned/image PDF".to_string()));
+    }
+    
     if content.trim().len() < 50 {
-        println!(
-            "⚠️ Skipping image-only PDF: {:?}",
-            path.file_name().unwrap_or_default()
-        );
-        return None;
+        return (None, Some(format!("Too little text ({} chars) - likely a scanned/image PDF", content.trim().len())));
     }
 
-    Some(FileData {
+    (Some(FileData {
         path: path.to_string_lossy().to_string(),
         name: path
             .file_name()
@@ -259,7 +344,7 @@ fn process_single_pdf(path: &Path) -> Option<FileData> {
         last_modified: modified,
         file_type: "pdf".to_string(),
         content,
-    })
+    }), None)
 }
 
 /// Get PDF queue status

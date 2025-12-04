@@ -610,6 +610,10 @@ export const tauriAPI = {
     listeners["pdf-indexed"] = listeners["pdf-indexed"] || [];
     listeners["pdf-indexed"].push(cb);
   },
+  onPdfSkipped: (cb: Function) => {
+    listeners["pdf-skipped"] = listeners["pdf-skipped"] || [];
+    listeners["pdf-skipped"].push(cb);
+  },
   removeAllListeners: (channel: string) => {
     delete listeners[channel];
   },
