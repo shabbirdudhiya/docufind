@@ -19,7 +19,7 @@ pub use query_parser::{parse_simple_query, matches_parsed_query, ParsedQuery};
 pub use history::{SearchHistory, MAX_HISTORY_ENTRIES};
 pub use filters::apply_filters;
 
-use crate::models::{SearchResult, Match};
+use crate::models::Match;
 
 /// Find matches in content and return Match structs with context
 pub fn find_matches_in_content(content: &str, name: &str, query_lower: &str) -> Vec<Match> {
