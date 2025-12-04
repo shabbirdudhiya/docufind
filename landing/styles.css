@@ -700,6 +700,7 @@ body {
   inset: 0;
   background: var(--gradient-primary);
   opacity: 0.05;
+  pointer-events: none;
 }
 
 .download-header {
@@ -769,6 +770,35 @@ body {
 .download-size {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+.download-alt {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  position: relative;
+  z-index: 10;
+}
+
+.alt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  padding: 10px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 10;
+  cursor: pointer;
+}
+
+.alt-link:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.1);
 }
 
 .download-note {
