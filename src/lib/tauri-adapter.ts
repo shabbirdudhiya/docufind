@@ -11,7 +11,7 @@ interface RustFileData {
 export interface FileData {
   path: string;
   name: string;
-  type: "word" | "powerpoint" | "text";
+  type: "word" | "powerpoint" | "text" | "pdf" | "excel";
   size: number;
   lastModified: Date;
   content?: string;
@@ -36,9 +36,12 @@ export interface IndexStats {
   totalFiles: number;
   wordFiles: number;
   powerPointFiles: number;
+  pdfFiles: number;
+  excelFiles: number;
   textFiles: number;
   totalSize: number;
   folderCount: number;
+  pdfQueuePending?: number;
 }
 
 export interface LoadIndexResult {
@@ -48,6 +51,43 @@ export interface LoadIndexResult {
   folderCount?: number;
   folders?: string[];
   excludedFolders?: string[];
+}
+
+// Folder tree node for hierarchical exclusion UI
+export interface FolderNode {
+  path: string;
+  name: string;
+  isExcluded: boolean;
+  fileCount: number;
+  children: FolderNode[];
+}
+
+// Search history entry
+export interface SearchHistoryEntry {
+  query: string;
+  timestamp: string;
+  resultCount: number;
+}
+
+// Search filters
+export interface SearchFilters {
+  fileTypes?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+  minSize?: number;
+  maxSize?: number;
+  folderPath?: string;
+}
+
+// PDF queue status
+export interface PdfQueueStatus {
+  pending: number;
+  processing: number;
+  completed: number;
+  total: number;
+  isRunning: boolean;
+  progressPercent: number;
+  isComplete: boolean;
 }
 
 // Event listeners
@@ -62,12 +102,21 @@ const emit = (event: string, data: any) => {
 // Setup Tauri event listeners
 let fileChangedUnlisten: (() => void) | null = null;
 let indexingProgressUnlisten: (() => void) | null = null;
+let pdfProgressUnlisten: (() => void) | null = null;
+let pdfCompleteUnlisten: (() => void) | null = null;
+let pdfIndexedUnlisten: (() => void) | null = null;
 
 interface IndexingProgressPayload {
   current: number;
   total: number;
   filename: string;
-  phase: string; // "discovering" | "indexing" | "finalizing"
+  phase: string; // "discovering" | "indexing" | "finalizing" | "pdf-background"
+}
+
+interface PdfProgressPayload {
+  completed: number;
+  total: number;
+  current: string;
 }
 
 const setupTauriListeners = async () => {
@@ -97,6 +146,27 @@ const setupTauriListeners = async () => {
         emit("indexing-progress", event.payload);
       }
     );
+
+    // Listen for PDF background processing progress
+    pdfProgressUnlisten = await listen<PdfProgressPayload>(
+      "pdf-progress",
+      (event) => {
+        emit("pdf-progress", event.payload);
+      }
+    );
+
+    // Listen for PDF processing complete
+    pdfCompleteUnlisten = await listen<{ total: number }>(
+      "pdf-complete",
+      (event) => {
+        emit("pdf-complete", event.payload);
+      }
+    );
+
+    // Listen for individual PDF indexed
+    pdfIndexedUnlisten = await listen<RustFileData>("pdf-indexed", (event) => {
+      emit("pdf-indexed", event.payload);
+    });
   } catch (e) {
     console.error("Failed to setup Tauri listeners:", e);
   }
@@ -153,7 +223,7 @@ export const tauriAPI = {
         size: f.size,
         content: f.content,
         lastModified: new Date(f.last_modified),
-        type: f.file_type as "word" | "powerpoint" | "text",
+        type: f.file_type as "word" | "powerpoint" | "text" | "pdf" | "excel",
       }));
 
       emit("indexing-status", { isIndexing: false });
@@ -265,7 +335,7 @@ export const tauriAPI = {
         name: f.name,
         size: f.size,
         lastModified: new Date(f.last_modified),
-        type: f.file_type as "word" | "powerpoint" | "text",
+        type: f.file_type as "word" | "powerpoint" | "text" | "pdf" | "excel",
       }));
       return { success: true, files: mappedFiles };
     } catch (e: any) {
@@ -289,7 +359,16 @@ export const tauriAPI = {
   },
 
   // Load index from disk
-  loadIndex: async () => {
+  loadIndex: async (): Promise<{
+    success: boolean;
+    loaded?: boolean;
+    message?: string;
+    fileCount?: number;
+    folderCount?: number;
+    folders?: string[];
+    excludedFolders?: string[];
+    error?: string;
+  }> => {
     if (typeof window === "undefined") {
       return { success: false, error: "Not available during SSR" };
     }
@@ -391,7 +470,13 @@ export const tauriAPI = {
           lastModified: r.file?.last_modified
             ? new Date(r.file.last_modified)
             : new Date(),
-          type: (r.file?.file_type as "word" | "powerpoint" | "text") || "text",
+          type:
+            (r.file?.file_type as
+              | "word"
+              | "powerpoint"
+              | "text"
+              | "pdf"
+              | "excel") || "text",
         },
         matches: (r.matches || []).map((m) => ({
           text: m?.text || "",
@@ -513,7 +598,186 @@ export const tauriAPI = {
     listeners["indexing-progress"] = listeners["indexing-progress"] || [];
     listeners["indexing-progress"].push(cb);
   },
+  onPdfProgress: (cb: Function) => {
+    listeners["pdf-progress"] = listeners["pdf-progress"] || [];
+    listeners["pdf-progress"].push(cb);
+  },
+  onPdfComplete: (cb: Function) => {
+    listeners["pdf-complete"] = listeners["pdf-complete"] || [];
+    listeners["pdf-complete"].push(cb);
+  },
+  onPdfIndexed: (cb: Function) => {
+    listeners["pdf-indexed"] = listeners["pdf-indexed"] || [];
+    listeners["pdf-indexed"].push(cb);
+  },
   removeAllListeners: (channel: string) => {
     delete listeners[channel];
+  },
+
+  // ========== NEW APIs ==========
+
+  // Get folder tree for hierarchical exclusion UI
+  getFolderTree: async (): Promise<{
+    success: boolean;
+    tree?: FolderNode[];
+    error?: string;
+  }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      interface RustFolderNode {
+        path: string;
+        name: string;
+        is_excluded: boolean;
+        file_count: number;
+        children: RustFolderNode[];
+      }
+
+      const mapNode = (node: RustFolderNode): FolderNode => ({
+        path: node.path,
+        name: node.name,
+        isExcluded: node.is_excluded,
+        fileCount: node.file_count,
+        children: node.children.map(mapNode),
+      });
+
+      const result = await invoke<RustFolderNode[]>("get_folder_tree");
+      return { success: true, tree: result.map(mapNode) };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Toggle folder exclusion (returns new state)
+  toggleFolderExclusion: async (
+    path: string
+  ): Promise<{ success: boolean; isExcluded?: boolean; error?: string }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const isExcluded = await invoke<boolean>("toggle_folder_exclusion", {
+        path,
+      });
+      return { success: true, isExcluded };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Batch exclude folders
+  excludeFoldersBatch: async (
+    paths: string[]
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("exclude_folders_batch", { paths });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Batch include folders (remove from exclusion)
+  includeFoldersBatch: async (
+    paths: string[]
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("include_folders_batch", { paths });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Get PDF queue status
+  getPdfQueueStatus: async (): Promise<{
+    success: boolean;
+    status?: PdfQueueStatus;
+    error?: string;
+  }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const status = await invoke<PdfQueueStatus>("get_pdf_queue_status");
+      return { success: true, status };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Get search history
+  getSearchHistory: async (
+    count?: number
+  ): Promise<{
+    success: boolean;
+    history?: SearchHistoryEntry[];
+    error?: string;
+  }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const history = await invoke<SearchHistoryEntry[]>("get_search_history", {
+        count,
+      });
+      return { success: true, history };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Clear search history
+  clearSearchHistory: async (): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("clear_search_history");
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
+  // Remove specific item from search history
+  removeFromSearchHistory: async (
+    query: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("remove_from_search_history", { query });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
   },
 };

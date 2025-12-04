@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 interface FileData {
     path: string
     name: string
-    type: 'word' | 'powerpoint' | 'text'
+    type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel'
     size: number
     lastModified: Date
 }
@@ -119,10 +119,12 @@ export function FilePreviewPane({
         scrollToMatch(prevIndex)
     }
 
-    const getFileIcon = (type: 'word' | 'powerpoint' | 'text') => {
+    const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel') => {
         switch (type) {
             case 'word': return <FileText className="h-5 w-5 text-blue-600" />
             case 'powerpoint': return <FileText className="h-5 w-5 text-orange-600" />
+            case 'pdf': return <FileText className="h-5 w-5 text-red-600" />
+            case 'excel': return <FileText className="h-5 w-5 text-green-600" />
             default: return <File className="h-5 w-5 text-gray-600" />
         }
     }

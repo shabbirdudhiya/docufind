@@ -50,6 +50,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/AppSidebar'
 import { FilePreviewPane } from '@/components/FilePreviewPane'
+import { FolderTree } from '@/components/FolderTree'
+import { PdfProgressIndicator } from '@/components/PdfProgressIndicator'
 
 import { tauriAPI } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
@@ -58,7 +60,7 @@ import { initAnalytics, Analytics } from '@/lib/firebase'
 interface FileData {
   path: string
   name: string
-  type: 'word' | 'powerpoint' | 'text'
+  type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel'
   size: number
   lastModified: Date
 }
@@ -642,10 +644,12 @@ export default function Home() {
     }
   }
 
-  const getFileIcon = (type: 'word' | 'powerpoint' | 'text') => {
+  const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel') => {
     switch (type) {
       case 'word': return <FileText className="h-4 w-4 text-blue-600" />
       case 'powerpoint': return <FileText className="h-4 w-4 text-orange-600" />
+      case 'pdf': return <FileText className="h-4 w-4 text-red-600" />
+      case 'excel': return <FileText className="h-4 w-4 text-green-600" />
       default: return <File className="h-4 w-4 text-gray-600" />
     }
   }
@@ -1274,50 +1278,35 @@ export default function Home() {
                     </CardContent>
                   </Card>
 
-                  {/* Excluded Folders Section */}
+                  {/* Folder Exclusions Section - Hierarchical Tree */}
                   <Card className="glass-card">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
-                        <EyeOff className="h-5 w-5" />
-                        Search Exclusions
+                        <FolderOpen className="h-5 w-5" />
+                        Folder Exclusions
                       </CardTitle>
                       <CardDescription>
-                        Folders excluded from search results will still be indexed, but won't appear in search results.
-                        Useful for archive folders you rarely need to search.
+                        Toggle folders on/off to include or exclude them from search results.
+                        Unchecked folders won't appear in search results but remain in the index.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      {excludedFolders.length > 0 ? (
-                        <div className="space-y-2">
-                          {excludedFolders.map((folder) => (
-                            <div 
-                              key={folder}
-                              className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border/50"
-                            >
-                              <div className="flex items-center gap-3">
-                                <EyeOff className="h-4 w-4 text-muted-foreground" />
-                                <div>
-                                  <p className="font-medium text-sm">{folder.split(/[/\\]/).pop()}</p>
-                                  <p className="text-xs text-muted-foreground font-mono truncate max-w-md">{folder}</p>
-                                </div>
-                              </div>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => toggleFolderExclusion(folder)}
-                                className="text-primary hover:bg-primary/10"
-                              >
-                                <Eye className="h-4 w-4 mr-2" />
-                                Include
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
+                    <CardContent>
+                      {indexedFolders.length > 0 ? (
+                        <FolderTree 
+                          onExclusionChange={async () => {
+                            // Refresh excluded folders list
+                            const result = await tauriAPI.getExcludedFolders()
+                            if (result.success && result.folders) {
+                              setExcludedFolders(result.folders)
+                            }
+                          }}
+                          className="max-h-[400px]"
+                        />
                       ) : (
                         <div className="text-center py-8 text-muted-foreground">
-                          <EyeOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                          <p className="text-sm">No folders excluded from search</p>
-                          <p className="text-xs mt-1">Click the eye icon on any indexed folder to exclude it</p>
+                          <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">No folders indexed yet</p>
+                          <p className="text-xs mt-1">Add folders to see the folder tree</p>
                         </div>
                       )}
                     </CardContent>
@@ -1773,6 +1762,36 @@ export default function Home() {
           </Card>
         </div>
       )}
+
+      {/* PDF Background Processing Indicator */}
+      <PdfProgressIndicator 
+        onPdfIndexed={async () => {
+          // Refresh stats when a PDF is indexed
+          const statsResult = await tauriAPI.getIndexStats()
+          if (statsResult.success && statsResult.stats) {
+            setStats({
+              totalFiles: statsResult.stats.totalFiles,
+              wordFiles: statsResult.stats.wordFiles,
+              powerPointFiles: statsResult.stats.powerPointFiles,
+              textFiles: statsResult.stats.textFiles,
+              totalSize: statsResult.stats.totalSize
+            })
+          }
+        }}
+        onComplete={async () => {
+          // Refresh all data when PDF processing completes
+          const statsResult = await tauriAPI.getIndexStats()
+          if (statsResult.success && statsResult.stats) {
+            setStats({
+              totalFiles: statsResult.stats.totalFiles,
+              wordFiles: statsResult.stats.wordFiles,
+              powerPointFiles: statsResult.stats.powerPointFiles,
+              textFiles: statsResult.stats.textFiles,
+              totalSize: statsResult.stats.totalSize
+            })
+          }
+        }}
+      />
     </SidebarProvider>
   )
 }
