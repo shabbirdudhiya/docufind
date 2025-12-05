@@ -55,6 +55,7 @@ pub fn run() {
             commands::extract_file_content,
             commands::delete_file,
             commands::open_file,
+            commands::open_file_and_search,
             commands::show_in_folder,
             
             // Folders

@@ -505,6 +505,19 @@ export const tauriAPI = {
     }
   },
 
+  // Open file and automatically navigate to search term (Windows COM automation for Office)
+  openFileAndSearch: async (filePath: string, searchTerm: string) => {
+    if (typeof window === "undefined") return;
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      await invoke("open_file_and_search", { filePath, searchTerm });
+    } catch (e: any) {
+      console.error("Open file and search error:", e);
+      throw e;
+    }
+  },
+
   openFileLocation: async (filePath: string) => {
     if (typeof window === "undefined") return;
     const { invoke } = await import("@tauri-apps/api/core");

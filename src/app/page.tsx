@@ -704,9 +704,14 @@ export default function Home() {
     )
   }
 
-  const openFile = async (filePath: string) => {
+  const openFile = async (filePath: string, withSearchTerm?: string) => {
     try { 
-      await tauriAPI.openFile(filePath)
+      // If a search term is provided, use the smart open that navigates to the match
+      if (withSearchTerm && withSearchTerm.trim()) {
+        await tauriAPI.openFileAndSearch(filePath, withSearchTerm)
+      } else {
+        await tauriAPI.openFile(filePath)
+      }
       // Track file open - extract file type from extension
       const ext = filePath.split('.').pop()?.toLowerCase() || 'unknown'
       Analytics.fileOpened(ext)
@@ -1679,7 +1684,7 @@ export default function Home() {
         searchQuery={searchQuery}
         isOpen={previewOpen}
         onClose={() => setPreviewOpen(false)}
-        onOpenFile={(path) => openFile(path)}
+        onOpenFile={(path) => openFile(path, searchQuery)}
         onOpenLocation={(path) => openFileLocation(path)}
         isLoading={isLoadingPreview}
       />
