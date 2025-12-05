@@ -67,6 +67,80 @@ export interface SearchHistoryEntry {
   resultCount: number;
 }
 
+// ========== Structured Document Content Types ==========
+
+// Text formatting style for a run of text
+export interface TextStyle {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  superscript?: boolean;
+  subscript?: boolean;
+  highlight?: string;
+  color?: string;
+  font_size?: number;
+}
+
+// A run of text with consistent formatting
+export interface TextRun {
+  text: string;
+  style: TextStyle;
+}
+
+// Properties for a content section (matches Rust SectionProperties)
+export interface SectionProperties {
+  column_widths?: number[];
+  image_data?: string;
+  alt_text?: string;
+  width?: number;
+  height?: number;
+}
+
+// Type of content section (matches Rust SectionType with serde(tag = "type"))
+export type SectionType =
+  | { type: "Heading"; level: number }
+  | { type: "Paragraph" }
+  | { type: "ListItem"; ordered: boolean; depth: number }
+  | { type: "Table" }
+  | { type: "TableRow" }
+  | { type: "TableCell" }
+  | { type: "Image" }
+  | { type: "PageBreak" }
+  | { type: "SlideBreak"; slide_number: number }
+  | { type: "CodeBlock" }
+  | { type: "HorizontalRule" }
+  | { type: "Link"; url: string };
+
+// A section of document content (paragraph, heading, table, etc.)
+export interface ContentSection {
+  section_type: SectionType;
+  content?: string;
+  runs?: TextRun[];
+  children?: ContentSection[];
+  properties?: SectionProperties;
+}
+
+// Document metadata
+export interface DocumentMetadata {
+  title?: string;
+  author?: string;
+  created?: string;
+  modified?: string;
+  page_count?: number;
+  slide_count?: number;
+  sheet_count?: number;
+}
+
+// Full structured document content
+export interface DocumentContent {
+  doc_type: string;
+  sections: ContentSection[];
+  metadata: DocumentMetadata;
+}
+
+// ========== End Structured Document Content Types ==========
+
 // Search filters
 export interface SearchFilters {
   fileTypes?: string[];
@@ -292,7 +366,7 @@ export const tauriAPI = {
         name: f.name,
         size: f.size,
         lastModified: new Date(f.last_modified),
-        type: f.file_type as "word" | "powerpoint" | "text" | "pdf" | "excel",
+        type: f.file_type as "word" | "powerpoint" | "text" | "excel",
       }));
       return { success: true, files: mappedFiles };
     } catch (e: any) {
@@ -459,6 +533,31 @@ export const tauriAPI = {
       return { success: true, content };
     } catch (e: any) {
       console.error("Extract content error:", e);
+      return { success: false, error: e.message || String(e) };
+    }
+  },
+
+  /**
+   * Extract structured content from a file for rich preview
+   * Returns formatted sections with headings, paragraphs, tables, etc.
+   */
+  extractContentStructured: async (filePath: string) => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      // Rust returns snake_case, we'll use it directly
+      const content = await invoke<DocumentContent>(
+        "extract_file_content_structured",
+        {
+          filePath,
+        }
+      );
+      return { success: true, content };
+    } catch (e: any) {
+      console.error("Extract structured content error:", e);
       return { success: false, error: e.message || String(e) };
     }
   },

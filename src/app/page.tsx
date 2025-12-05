@@ -52,7 +52,7 @@ import { AppSidebar } from '@/components/AppSidebar'
 import { FilePreviewPane } from '@/components/FilePreviewPane'
 import { FolderTree } from '@/components/FolderTree'
 
-import { tauriAPI } from '@/lib/tauri-adapter'
+import { tauriAPI, DocumentContent } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
 import { initAnalytics, Analytics } from '@/lib/firebase'
 
@@ -156,6 +156,7 @@ export default function Home() {
   const [showSearchHistory, setShowSearchHistory] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewContent, setPreviewContent] = useState<string>('')
+  const [previewStructuredContent, setPreviewStructuredContent] = useState<DocumentContent | null>(null)
   const [previewFile, setPreviewFile] = useState<FileData | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -433,11 +434,26 @@ export default function Home() {
     setPreviewFile(file)
     setPreviewOpen(true)
     setPreviewContent('')
+    setPreviewStructuredContent(null)
     
     try {
-      const result = await tauriAPI.extractContent(file.path)
-      if (result.success) setPreviewContent(result.content || 'No content available')
-      else setPreviewContent('Failed to load preview: ' + (result.error || 'Unknown error'))
+      // Fetch both plain text and structured content in parallel
+      const [textResult, structuredResult] = await Promise.all([
+        tauriAPI.extractContent(file.path),
+        tauriAPI.extractContentStructured(file.path)
+      ])
+      
+      // Set plain text content (fallback)
+      if (textResult.success) {
+        setPreviewContent(textResult.content || 'No content available')
+      } else {
+        setPreviewContent('Failed to load preview: ' + (textResult.error || 'Unknown error'))
+      }
+      
+      // Set structured content if available
+      if (structuredResult.success && structuredResult.content) {
+        setPreviewStructuredContent(structuredResult.content)
+      }
     } catch (err) {
       setPreviewContent('Failed to load preview')
       console.error(err)
@@ -1681,6 +1697,7 @@ export default function Home() {
       <FilePreviewPane
         file={previewFile}
         content={previewContent}
+        structuredContent={previewStructuredContent}
         searchQuery={searchQuery}
         isOpen={previewOpen}
         onClose={() => setPreviewOpen(false)}

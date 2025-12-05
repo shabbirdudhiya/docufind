@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ExternalLink, FolderOpen, ChevronUp, ChevronDown, X, FileText, File } from 'lucide-react'
+import { ExternalLink, FolderOpen, ChevronUp, ChevronDown, X, FileText, File, Eye, AlignLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { StructuredContentRenderer } from './StructuredContentRenderer'
+import type { DocumentContent } from '@/lib/tauri-adapter'
 
 interface FileData {
     path: string
@@ -13,9 +15,12 @@ interface FileData {
     lastModified: Date
 }
 
+type ViewMode = 'text' | 'rich'
+
 interface FilePreviewPaneProps {
     file: FileData | null
     content: string
+    structuredContent?: DocumentContent | null
     searchQuery: string
     isOpen: boolean
     onClose: () => void
@@ -27,6 +32,7 @@ interface FilePreviewPaneProps {
 export function FilePreviewPane({
     file,
     content,
+    structuredContent,
     searchQuery,
     isOpen,
     onClose,
@@ -36,8 +42,15 @@ export function FilePreviewPane({
 }: FilePreviewPaneProps) {
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
     const [totalMatches, setTotalMatches] = useState(0)
+    const [viewMode, setViewMode] = useState<ViewMode>('rich')
     const contentRef = useRef<HTMLDivElement>(null)
     const matchRefs = useRef<(HTMLElement | null)[]>([])
+
+    // Check if rich view is available (structured content exists with sections)
+    const richViewAvailable = structuredContent && structuredContent.sections && structuredContent.sections.length > 0
+    
+    // If rich view not available, force text mode
+    const effectiveViewMode = richViewAvailable ? viewMode : 'text'
 
     // Reset state when file or query changes
     useEffect(() => {
@@ -78,7 +91,9 @@ export function FilePreviewPane({
         return new RegExp(`(${escapedTerms.join('|')})`, 'gi')
     }
 
+    // Count matches for text view only (rich view handles its own counting)
     useEffect(() => {
+        if (effectiveViewMode !== 'text') return
         if (!content || !searchQuery) return
 
         const regex = getSearchRegex(searchQuery)
@@ -97,7 +112,14 @@ export function FilePreviewPane({
                 scrollToMatch(0)
             }, 100)
         }
-    }, [content, searchQuery, isOpen])
+    }, [content, searchQuery, isOpen, effectiveViewMode])
+
+    // Handler for match count from StructuredContentRenderer
+    const handleStructuredMatchCount = (count: number) => {
+        if (effectiveViewMode === 'rich') {
+            setTotalMatches(count)
+        }
+    }
 
     const scrollToMatch = (index: number) => {
         if (index >= 0 && index < matchRefs.current.length) {
@@ -111,12 +133,20 @@ export function FilePreviewPane({
 
     const handleNextMatch = () => {
         const nextIndex = (currentMatchIndex + 1) % totalMatches
-        scrollToMatch(nextIndex)
+        setCurrentMatchIndex(nextIndex)
+        // For text view, also scroll
+        if (effectiveViewMode === 'text') {
+            scrollToMatch(nextIndex)
+        }
     }
 
     const handlePrevMatch = () => {
         const prevIndex = (currentMatchIndex - 1 + totalMatches) % totalMatches
-        scrollToMatch(prevIndex)
+        setCurrentMatchIndex(prevIndex)
+        // For text view, also scroll
+        if (effectiveViewMode === 'text') {
+            scrollToMatch(prevIndex)
+        }
     }
 
     const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel') => {
@@ -225,6 +255,32 @@ export function FilePreviewPane({
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 ml-4">
+                        {/* View Mode Toggle */}
+                        {richViewAvailable && (
+                            <div className="flex items-center bg-muted/50 rounded-lg border border-border/50 mr-2 p-0.5">
+                                <Button
+                                    variant={viewMode === 'rich' ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    className="h-7 px-2 gap-1 rounded-md"
+                                    onClick={() => setViewMode('rich')}
+                                    title="Rich View"
+                                >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    <span className="text-xs">Rich</span>
+                                </Button>
+                                <Button
+                                    variant={viewMode === 'text' ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    className="h-7 px-2 gap-1 rounded-md"
+                                    onClick={() => setViewMode('text')}
+                                    title="Text View"
+                                >
+                                    <AlignLeft className="h-3.5 w-3.5" />
+                                    <span className="text-xs">Text</span>
+                                </Button>
+                            </div>
+                        )}
+
                         {/* Search Navigation */}
                         {totalMatches > 0 && (
                             <div className="flex items-center bg-muted/50 rounded-lg border border-border/50 mr-4 px-1">
@@ -270,6 +326,15 @@ export function FilePreviewPane({
                                             <div className="h-3 bg-muted/50 rounded w-full" />
                                             <div className="h-3 bg-muted/50 rounded w-full" />
                                         </div>
+                                    </div>
+                                ) : effectiveViewMode === 'rich' && structuredContent ? (
+                                    <div className="w-full">
+                                        <StructuredContentRenderer
+                                            content={structuredContent}
+                                            searchQuery={searchQuery}
+                                            onMatchCountChange={handleStructuredMatchCount}
+                                            currentMatchIndex={currentMatchIndex}
+                                        />
                                     </div>
                                 ) : (
                                     <div className="w-full" ref={contentRef}>

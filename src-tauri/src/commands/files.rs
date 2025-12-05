@@ -1,11 +1,12 @@
 use std::path::Path;
 use tauri::State;
 
-use crate::extractors::extract_content;
+use crate::extractors::{extract_content, extract_content_structured};
+use crate::models::DocumentContent;
 use crate::search::tantivy_search::delete_document_from_tantivy;
 use crate::state::AppState;
 
-/// Extract file content for preview
+/// Extract file content for preview (plain text)
 #[tauri::command]
 pub async fn extract_file_content(file_path: String) -> Result<String, String> {
     let path = Path::new(&file_path);
@@ -16,6 +17,20 @@ pub async fn extract_file_content(file_path: String) -> Result<String, String> {
         .unwrap_or_default();
 
     extract_content(path, &ext).ok_or_else(|| "Failed to extract content".to_string())
+}
+
+/// Extract file content for rich preview (structured)
+#[tauri::command]
+pub async fn extract_file_content_structured(file_path: String) -> Result<DocumentContent, String> {
+    let path = Path::new(&file_path);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    extract_content_structured(path, &ext)
+        .ok_or_else(|| "Failed to extract structured content".to_string())
 }
 
 /// Move file to trash

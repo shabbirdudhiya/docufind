@@ -84,3 +84,111 @@ pub struct IndexStats {
     pub total_size: u64,
     pub folder_count: usize,
 }
+
+// ============================================================================
+// Structured Document Content Models (for rich preview)
+// ============================================================================
+
+/// Structured document content for rich preview rendering
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentContent {
+    /// The type of document (word, powerpoint, excel, text)
+    pub doc_type: String,
+    /// Structured content sections
+    pub sections: Vec<ContentSection>,
+    /// Document metadata (title, author, etc.)
+    pub metadata: DocumentMetadata,
+}
+
+/// Document metadata extracted from file properties
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct DocumentMetadata {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+    pub page_count: Option<usize>,
+    pub slide_count: Option<usize>,
+    pub sheet_count: Option<usize>,
+}
+
+/// A section of content within a document
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ContentSection {
+    /// Type of this section
+    pub section_type: SectionType,
+    /// Text content (may contain inline formatting via TextRun)
+    pub content: Option<String>,
+    /// Rich text runs for inline formatting
+    pub runs: Option<Vec<TextRun>>,
+    /// Child sections (for nested lists, etc.)
+    pub children: Option<Vec<ContentSection>>,
+    /// Additional properties based on section type
+    pub properties: Option<SectionProperties>,
+}
+
+/// Type of content section
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub enum SectionType {
+    /// Heading with level 1-6
+    Heading { level: u8 },
+    /// Normal paragraph
+    Paragraph,
+    /// List item (bullet or numbered)
+    ListItem { ordered: bool, depth: u8 },
+    /// Table with rows and cells
+    Table,
+    /// Table row
+    TableRow,
+    /// Table cell
+    TableCell,
+    /// Image/picture
+    Image,
+    /// Page break marker
+    PageBreak,
+    /// Slide break (for PPTX)
+    SlideBreak { slide_number: u32 },
+    /// Code block or preformatted text
+    CodeBlock,
+    /// Horizontal rule
+    HorizontalRule,
+    /// Hyperlink
+    Link { url: String },
+}
+
+/// A run of text with consistent formatting
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TextRun {
+    pub text: String,
+    pub style: TextStyle,
+}
+
+/// Text formatting style
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TextStyle {
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+    pub highlight: Option<String>,  // Highlight color if any
+    pub color: Option<String>,       // Text color if specified
+    pub font_size: Option<f32>,      // Font size in points
+}
+
+/// Additional properties for specific section types
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SectionProperties {
+    /// For tables: column widths
+    pub column_widths: Option<Vec<f32>>,
+    /// For images: base64 data or path
+    pub image_data: Option<String>,
+    /// For images: alt text
+    pub alt_text: Option<String>,
+    /// For images: width in pixels
+    pub width: Option<u32>,
+    /// For images: height in pixels
+    pub height: Option<u32>,
+}
