@@ -20,8 +20,6 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
     setActiveTab: (tab: string) => void
     isDarkMode: boolean
     toggleDarkMode: () => void
-    isRTL: boolean
-    toggleRTL: () => void
 }
 
 export function AppSidebar({
@@ -29,8 +27,6 @@ export function AppSidebar({
     setActiveTab,
     isDarkMode,
     toggleDarkMode,
-    isRTL,
-    toggleRTL,
     ...props
 }: AppSidebarProps) {
     return (
@@ -42,7 +38,7 @@ export function AppSidebar({
                     </div>
                     <div className="flex flex-col">
                         <span className="font-bold text-lg tracking-tight">DocuFind</span>
-                        <span className="text-xs text-muted-foreground">v1.0.0</span>
+                        <span className="text-xs text-muted-foreground">v1.3.0</span>
                     </div>
                 </div>
             </SidebarHeader>

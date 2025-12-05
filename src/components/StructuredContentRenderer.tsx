@@ -12,6 +12,7 @@ interface StructuredContentRendererProps {
   searchQuery?: string;
   onMatchCountChange?: (count: number) => void;
   currentMatchIndex?: number;
+  isRTL?: boolean;
 }
 
 // Helper to extract search terms from query
@@ -359,7 +360,8 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
   content,
   searchQuery,
   onMatchCountChange,
-  currentMatchIndex = 0
+  currentMatchIndex = 0,
+  isRTL = false
 }) => {
   const matchRefs = useRef<(HTMLElement | null)[]>([]);
   const matchCountRef = useRef(0);
@@ -463,7 +465,7 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
   const grouped = groupSections(content.sections);
   
   return (
-    <div className="structured-content max-w-none">
+    <div className={cn("structured-content max-w-none", isRTL && "text-right")}>
       {renderMetadata()}
       
       {grouped.map((item, i) => {

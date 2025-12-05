@@ -134,7 +134,6 @@ export default function Home() {
     totalSize: 0
   })
   const [isDarkMode, setIsDarkMode] = useState(false)
-  const [isRTL, setIsRTL] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false)
@@ -159,6 +158,7 @@ export default function Home() {
   const [previewStructuredContent, setPreviewStructuredContent] = useState<DocumentContent | null>(null)
   const [previewFile, setPreviewFile] = useState<FileData | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+  const [isOpeningFile, setIsOpeningFile] = useState(false)  // New: for file opening spinner
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   // Settings
@@ -249,8 +249,6 @@ export default function Home() {
     if (savedShowFilePreview !== null) setShowFilePreview(savedShowFilePreview === 'true')
     const savedAutoWatch = localStorage.getItem('autoWatch')
     if (savedAutoWatch !== null) setAutoWatch(savedAutoWatch === 'true')
-    const savedRTL = localStorage.getItem('isRTL')
-    if (savedRTL !== null) setIsRTL(savedRTL === 'true')
 
     // Check for updates on startup (with small delay to not block UI)
     const checkUpdates = async () => {
@@ -350,12 +348,6 @@ export default function Home() {
     setIsDarkMode(!isDarkMode)
     document.documentElement.classList.toggle('dark')
     localStorage.setItem('darkMode', (!isDarkMode).toString())
-  }
-
-  const toggleRTL = () => {
-    const newRTL = !isRTL
-    setIsRTL(newRTL)
-    localStorage.setItem('isRTL', newRTL.toString())
   }
 
   const updateResultsPerPage = (value: number) => {
@@ -722,6 +714,9 @@ export default function Home() {
 
   const openFile = async (filePath: string, withSearchTerm?: string) => {
     try { 
+      // Show loading spinner
+      setIsOpeningFile(true)
+      
       // If a search term is provided, use the smart open that navigates to the match
       if (withSearchTerm && withSearchTerm.trim()) {
         await tauriAPI.openFileAndSearch(filePath, withSearchTerm)
@@ -731,7 +726,13 @@ export default function Home() {
       // Track file open - extract file type from extension
       const ext = filePath.split('.').pop()?.toLowerCase() || 'unknown'
       Analytics.fileOpened(ext)
-    } catch (err) { setError('Failed to open file'); console.error(err) }
+    } catch (err) { 
+      setError('Failed to open file')
+      console.error(err) 
+    } finally {
+      // Hide loading spinner after a small delay to ensure app has launched
+      setTimeout(() => setIsOpeningFile(false), 500)
+    }
   }
 
   const openFileLocation = async (filePath: string) => {
@@ -761,7 +762,7 @@ export default function Home() {
   }
 
   const isRTLText = (text: string) => /[\u0591-\u07FF\u200F\u202B\u202E\uFB1D-\uFDFD\uFE70-\uFEFC]/.test(text)
-  const getTextDirection = (text: string) => isRTL ? 'rtl' : (isRTLText(text) ? 'rtl' : 'ltr')
+  const getTextDirection = (text: string) => isRTLText(text) ? 'rtl' : 'ltr'
 
   if (!isMounted) return null
 
@@ -794,8 +795,6 @@ export default function Home() {
           setActiveTab={setActiveTab}
           isDarkMode={isDarkMode}
           toggleDarkMode={toggleDarkMode}
-          isRTL={isRTL}
-          toggleRTL={toggleRTL}
         />
 
         <main className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -1321,16 +1320,6 @@ export default function Home() {
                           {isDarkMode ? 'Dark' : 'Light'}
                         </Button>
                       </div>
-                      <Separator />
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <label className="text-sm font-medium">RTL Support</label>
-                          <p className="text-xs text-muted-foreground">Right-to-left text direction</p>
-                        </div>
-                        <Button variant="outline" onClick={toggleRTL}>
-                          {isRTL ? 'Enabled' : 'Disabled'}
-                        </Button>
-                      </div>
                     </CardContent>
                   </Card>
 
@@ -1370,7 +1359,7 @@ export default function Home() {
                   </Card>
 
                   {/* Folder Exclusions Section - Hierarchical Tree */}
-                  <Card className="glass-card">
+                  <Card className="glass-card overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <FolderOpen className="h-5 w-5" />
@@ -1381,7 +1370,7 @@ export default function Home() {
                         Unchecked folders won't appear in search results but remain in the index.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="overflow-auto max-h-[500px]">
                       {indexedFolders.length > 0 ? (
                         <FolderTree 
                           onExclusionChange={async () => {
@@ -1391,7 +1380,7 @@ export default function Home() {
                               setExcludedFolders(result.folders)
                             }
                           }}
-                          className="max-h-[400px]"
+                          className=""
                         />
                       ) : (
                         <div className="text-center py-8 text-muted-foreground">
@@ -1459,7 +1448,7 @@ export default function Home() {
                       <p className="text-muted-foreground mt-2">Your intelligent local document search engine</p>
                     </div>
                     <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                      <span className="px-2 py-1 rounded-md bg-muted border border-border">v1.0.0</span>
+                      <span className="px-2 py-1 rounded-md bg-muted border border-border">v1.3.0</span>
                       <span>•</span>
                       <span>Built with ❤️ by Shabbir Dudhiya</span>
                     </div>
@@ -1607,7 +1596,7 @@ export default function Home() {
                   {/* Author Footer */}
                   <div className="text-center py-6 text-xs text-muted-foreground">
                     <p>
-                      DocuFind v1.0.0 • Created by <span className="font-medium text-foreground">Shabbir Dudhiya</span>
+                      DocuFind v1.3.0 • Created by <span className="font-medium text-foreground">Shabbir Dudhiya</span>
                     </p>
                   </div>
                 </div>
@@ -1704,6 +1693,7 @@ export default function Home() {
         onOpenFile={(path) => openFile(path, searchQuery)}
         onOpenLocation={(path) => openFileLocation(path)}
         isLoading={isLoadingPreview}
+        isOpeningFile={isOpeningFile}
       />
 
       {/* Confirm Dialog */}
