@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ExternalLink, FolderOpen, ChevronUp, ChevronDown, X, FileText, File } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ExternalLink, FolderOpen, ChevronUp, ChevronDown, X, FileText, File, Eye, AlignLeft, Loader2, Type } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { StructuredContentRenderer } from './StructuredContentRenderer'
+import type { DocumentContent } from '@/lib/tauri-adapter'
 
 interface FileData {
     path: string
@@ -13,31 +16,91 @@ interface FileData {
     lastModified: Date
 }
 
+type ViewMode = 'text' | 'rich'
+
+// Available font options for preview
+const FONT_OPTIONS = [
+    // Custom Arabic fonts (default)
+    { value: 'kanz-marjaan', label: 'Kanz Al Marjaan', family: '"Kanz Al Marjaan", "Traditional Arabic", serif', group: 'arabic' },
+    { value: 'al-kanz', label: 'Al-Kanz', family: '"Al-Kanz", "Traditional Arabic", serif', group: 'arabic' },
+    { value: 'amiri', label: 'Amiri', family: 'Amiri, "Traditional Arabic", "Simplified Arabic", serif', group: 'arabic' },
+    { value: 'noto-arabic', label: 'Noto Sans Arabic', family: '"Noto Sans Arabic", "Segoe UI", sans-serif', group: 'arabic' },
+    // Standard system fonts
+    { value: 'system', label: 'System Default', family: 'ui-sans-serif, system-ui, sans-serif', group: 'standard' },
+    { value: 'arial', label: 'Arial', family: 'Arial, sans-serif', group: 'standard' },
+    { value: 'times', label: 'Times New Roman', family: '"Times New Roman", Times, serif', group: 'standard' },
+    { value: 'georgia', label: 'Georgia', family: 'Georgia, serif', group: 'standard' },
+    { value: 'verdana', label: 'Verdana', family: 'Verdana, sans-serif', group: 'standard' },
+    { value: 'tahoma', label: 'Tahoma', family: 'Tahoma, sans-serif', group: 'standard' },
+    { value: 'courier', label: 'Courier New', family: '"Courier New", Courier, monospace', group: 'standard' },
+    { value: 'calibri', label: 'Calibri', family: 'Calibri, sans-serif', group: 'standard' },
+    { value: 'segoe', label: 'Segoe UI', family: '"Segoe UI", sans-serif', group: 'standard' },
+] as const
+
+// Default font for preview
+const DEFAULT_FONT = 'kanz-marjaan'
+
+// Regex to detect Arabic/RTL text (Arabic Unicode range)
+const RTL_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/
+
+// Helper to detect if content contains significant RTL text
+const detectRTL = (text: string): boolean => {
+    if (!text) return false
+    // Count Arabic characters
+    const arabicMatches = text.match(RTL_REGEX)
+    if (!arabicMatches) return false
+    // If more than 10% of first 1000 chars are Arabic, consider it RTL
+    const sampleText = text.slice(0, 1000)
+    const arabicCount = (sampleText.match(new RegExp(RTL_REGEX, 'g')) || []).length
+    return arabicCount / sampleText.length > 0.1
+}
+
 interface FilePreviewPaneProps {
     file: FileData | null
     content: string
+    structuredContent?: DocumentContent | null
     searchQuery: string
     isOpen: boolean
     onClose: () => void
     onOpenFile: (path: string) => void
     onOpenLocation: (path: string) => void
     isLoading: boolean
+    isOpeningFile?: boolean  // New: show spinner when opening file in external app
 }
 
 export function FilePreviewPane({
     file,
     content,
+    structuredContent,
     searchQuery,
     isOpen,
     onClose,
     onOpenFile,
     onOpenLocation,
-    isLoading
+    isLoading,
+    isOpeningFile = false
 }: FilePreviewPaneProps) {
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
     const [totalMatches, setTotalMatches] = useState(0)
+    const [viewMode, setViewMode] = useState<ViewMode>('rich')
+    const [selectedFont, setSelectedFont] = useState<string>(DEFAULT_FONT)
     const contentRef = useRef<HTMLDivElement>(null)
     const matchRefs = useRef<(HTMLElement | null)[]>([])
+
+    // Detect RTL content using regex
+    const isRTL = useMemo(() => detectRTL(content), [content])
+    
+    // Get the font family for the selected font
+    const fontFamily = useMemo(() => {
+        const font = FONT_OPTIONS.find(f => f.value === selectedFont)
+        return font?.family || FONT_OPTIONS[0].family
+    }, [selectedFont])
+
+    // Check if rich view is available (structured content exists with sections)
+    const richViewAvailable = structuredContent && structuredContent.sections && structuredContent.sections.length > 0
+    
+    // If rich view not available, force text mode
+    const effectiveViewMode = richViewAvailable ? viewMode : 'text'
 
     // Reset state when file or query changes
     useEffect(() => {
@@ -78,7 +141,9 @@ export function FilePreviewPane({
         return new RegExp(`(${escapedTerms.join('|')})`, 'gi')
     }
 
+    // Count matches for text view only (rich view handles its own counting)
     useEffect(() => {
+        if (effectiveViewMode !== 'text') return
         if (!content || !searchQuery) return
 
         const regex = getSearchRegex(searchQuery)
@@ -97,7 +162,14 @@ export function FilePreviewPane({
                 scrollToMatch(0)
             }, 100)
         }
-    }, [content, searchQuery, isOpen])
+    }, [content, searchQuery, isOpen, effectiveViewMode])
+
+    // Handler for match count from StructuredContentRenderer
+    const handleStructuredMatchCount = (count: number) => {
+        if (effectiveViewMode === 'rich') {
+            setTotalMatches(count)
+        }
+    }
 
     const scrollToMatch = (index: number) => {
         if (index >= 0 && index < matchRefs.current.length) {
@@ -111,12 +183,20 @@ export function FilePreviewPane({
 
     const handleNextMatch = () => {
         const nextIndex = (currentMatchIndex + 1) % totalMatches
-        scrollToMatch(nextIndex)
+        setCurrentMatchIndex(nextIndex)
+        // For text view, also scroll
+        if (effectiveViewMode === 'text') {
+            scrollToMatch(nextIndex)
+        }
     }
 
     const handlePrevMatch = () => {
         const prevIndex = (currentMatchIndex - 1 + totalMatches) % totalMatches
-        scrollToMatch(prevIndex)
+        setCurrentMatchIndex(prevIndex)
+        // For text view, also scroll
+        if (effectiveViewMode === 'text') {
+            scrollToMatch(prevIndex)
+        }
     }
 
     const getFileIcon = (type: 'word' | 'powerpoint' | 'text' | 'pdf' | 'excel') => {
@@ -203,7 +283,20 @@ export function FilePreviewPane({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-5xl h-[90vh] p-0 gap-0 border-none shadow-2xl bg-background overflow-hidden flex flex-col">
+            <DialogContent className="max-w-7xl w-[95vw] h-[90vh] p-0 gap-0 border-none shadow-2xl bg-background overflow-hidden flex flex-col">
+                {/* Opening File Overlay */}
+                {isOpeningFile && (
+                    <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+                        <div className="flex flex-col items-center gap-4 p-8 rounded-xl bg-card border border-border shadow-lg">
+                            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                            <div className="text-center">
+                                <p className="font-medium text-foreground">Opening file...</p>
+                                <p className="text-sm text-muted-foreground mt-1">Launching application and navigating to match</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Header */}
                 <div className="bg-background/80 backdrop-blur-xl border-b border-border/50 p-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4 overflow-hidden">
@@ -220,11 +313,68 @@ export function FilePreviewPane({
                                 <span className="shrink-0">{file && formatFileSize(file.size)}</span>
                                 <span className="shrink-0">•</span>
                                 <span className="shrink-0">{file && new Date(file.lastModified).toLocaleDateString()}</span>
+                                {isRTL && (
+                                    <>
+                                        <span className="shrink-0">•</span>
+                                        <span className="shrink-0 text-primary">RTL</span>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 ml-4">
+                        {/* Font Selector */}
+                        <div className="flex items-center gap-1 mr-2">
+                            <Type className="h-4 w-4 text-muted-foreground" />
+                            <Select value={selectedFont} onValueChange={setSelectedFont}>
+                                <SelectTrigger className="h-8 w-[150px] text-xs bg-muted/50 border-border/50">
+                                    <SelectValue placeholder="Font" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Arabic Fonts</div>
+                                    {FONT_OPTIONS.filter(f => f.group === 'arabic').map(font => (
+                                        <SelectItem key={font.value} value={font.value} className="text-xs">
+                                            <span style={{ fontFamily: font.family }}>{font.label}</span>
+                                        </SelectItem>
+                                    ))}
+                                    <div className="my-1 border-t border-border/50" />
+                                    <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Standard Fonts</div>
+                                    {FONT_OPTIONS.filter(f => f.group === 'standard').map(font => (
+                                        <SelectItem key={font.value} value={font.value} className="text-xs">
+                                            <span style={{ fontFamily: font.family }}>{font.label}</span>
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* View Mode Toggle */}
+                        {richViewAvailable && (
+                            <div className="flex items-center bg-muted/50 rounded-lg border border-border/50 mr-2 p-0.5">
+                                <Button
+                                    variant={viewMode === 'rich' ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    className="h-7 px-2 gap-1 rounded-md"
+                                    onClick={() => setViewMode('rich')}
+                                    title="Rich View"
+                                >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    <span className="text-xs">Rich</span>
+                                </Button>
+                                <Button
+                                    variant={viewMode === 'text' ? 'secondary' : 'ghost'}
+                                    size="sm"
+                                    className="h-7 px-2 gap-1 rounded-md"
+                                    onClick={() => setViewMode('text')}
+                                    title="Text View"
+                                >
+                                    <AlignLeft className="h-3.5 w-3.5" />
+                                    <span className="text-xs">Text</span>
+                                </Button>
+                            </div>
+                        )}
+
                         {/* Search Navigation */}
                         {totalMatches > 0 && (
                             <div className="flex items-center bg-muted/50 rounded-lg border border-border/50 mr-4 px-1">
@@ -257,10 +407,14 @@ export function FilePreviewPane({
                 {/* Content */}
                 <div className="flex-1 overflow-hidden bg-muted/30 relative">
                     <ScrollArea className="h-full w-full">
-                        <div className="p-8 min-h-full">
-                            <div className="bg-card border border-border/50 shadow-sm rounded-xl p-8 min-h-[500px]">
+                        <div className="p-6 min-h-full">
+                            <div 
+                                className="bg-card border border-border/50 shadow-sm rounded-xl p-6 md:p-8 min-h-[500px] overflow-x-auto"
+                                style={{ fontFamily }}
+                                dir={isRTL ? 'rtl' : 'ltr'}
+                            >
                                 {isLoading ? (
-                                    <div className="space-y-4 animate-pulse max-w-3xl mx-auto">
+                                    <div className="space-y-4 animate-pulse">
                                         <div className="h-4 bg-muted rounded w-3/4" />
                                         <div className="h-4 bg-muted rounded w-full" />
                                         <div className="h-4 bg-muted rounded w-5/6" />
@@ -271,9 +425,22 @@ export function FilePreviewPane({
                                             <div className="h-3 bg-muted/50 rounded w-full" />
                                         </div>
                                     </div>
+                                ) : effectiveViewMode === 'rich' && structuredContent ? (
+                                    <div className="w-full">
+                                        <StructuredContentRenderer
+                                            content={structuredContent}
+                                            searchQuery={searchQuery}
+                                            onMatchCountChange={handleStructuredMatchCount}
+                                            currentMatchIndex={currentMatchIndex}
+                                            isRTL={isRTL}
+                                        />
+                                    </div>
                                 ) : (
                                     <div className="w-full" ref={contentRef}>
-                                        <pre className="text-sm md:text-base leading-7 whitespace-pre-wrap font-sans text-foreground/90 break-words">
+                                        <pre className={cn(
+                                            "text-sm md:text-base leading-7 whitespace-pre-wrap text-foreground/90 break-words",
+                                            isRTL ? "text-right" : "text-left"
+                                        )}>
                                             {renderContent()}
                                         </pre>
                                     </div>
