@@ -39,6 +39,7 @@ regex = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 cfb = "0.9"
 encoding_rs = "0.8"
+rustc-hash = "2.0"  # Fast hashing for HashSet/HashMap
 
 chrono = { version = "0.4", features = ["serde"] }
 

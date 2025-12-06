@@ -6,6 +6,12 @@
 //! - Query parsing with AND/OR/NOT operators
 //! - Search history management
 //! - Search filters (date, type, size)
+//!
+//! PERFORMANCE OPTIMIZATIONS:
+//! - Early termination once enough results found
+//! - Single lowercase conversion per file
+//! - Fast ASCII path for context extraction
+//! - Parallel processing with rayon
 
 pub mod tantivy_search;
 mod direct_search;
@@ -22,11 +28,13 @@ pub use filters::apply_filters;
 use crate::models::Match;
 
 /// Find matches in content and return Match structs with context
+/// Used primarily by Tantivy search results
+#[inline]
 pub fn find_matches_in_content(content: &str, name: &str, query_lower: &str) -> Vec<Match> {
     let content_lower = content.to_lowercase();
-    let mut matches = Vec::new();
+    let mut matches = Vec::with_capacity(5);
     
-    // Find content matches
+    // Find content matches (limit to 5 for performance)
     for (byte_idx, _) in content_lower.match_indices(query_lower).take(5) {
         let context = get_context_around_match(content, byte_idx, query_lower.len(), 50);
         matches.push(Match {
@@ -36,8 +44,8 @@ pub fn find_matches_in_content(content: &str, name: &str, query_lower: &str) -> 
         });
     }
     
-    // Check filename match
-    if name.to_lowercase().contains(query_lower) && matches.is_empty() {
+    // Check filename match only if no content matches found
+    if matches.is_empty() && name.to_lowercase().contains(query_lower) {
         matches.push(Match {
             text: query_lower.to_string(),
             index: 0,
@@ -49,31 +57,45 @@ pub fn find_matches_in_content(content: &str, name: &str, query_lower: &str) -> 
 }
 
 /// Safely extract context around a match, respecting UTF-8 character boundaries
+/// 
+/// OPTIMIZATION: Fast path for ASCII content (most common case for English)
+/// Falls back to char iteration for non-ASCII content
+#[inline]
 pub fn get_context_around_match(
     content: &str,
     match_byte_idx: usize,
     match_len: usize,
     context_chars: usize,
 ) -> String {
-    // Convert byte index to char index
-    let char_indices: Vec<(usize, char)> = content.char_indices().collect();
-
-    // Find the char index corresponding to the byte index
-    let match_char_idx = char_indices
-        .iter()
-        .position(|(byte_pos, _)| *byte_pos >= match_byte_idx)
-        .unwrap_or(0);
-
-    // Calculate start and end char indices for context
+    // Fast path: ASCII content can use byte indices directly
+    if content.is_ascii() {
+        let start = match_byte_idx.saturating_sub(context_chars);
+        let end = (match_byte_idx + match_len + context_chars).min(content.len());
+        return content[start..end].to_string();
+    }
+    
+    // Slow path: Non-ASCII requires careful char boundary handling
+    // Use a more efficient approach - iterate once and track positions
+    let mut char_positions: Vec<usize> = Vec::with_capacity(content.len() / 2);
+    char_positions.push(0);
+    for (byte_pos, _) in content.char_indices().skip(1) {
+        char_positions.push(byte_pos);
+    }
+    char_positions.push(content.len());
+    
+    // Binary search to find the char index for match_byte_idx
+    let match_char_idx = match char_positions.binary_search(&match_byte_idx) {
+        Ok(idx) => idx,
+        Err(idx) => idx.saturating_sub(1),
+    };
+    
+    // Calculate context boundaries in char space
     let start_char = match_char_idx.saturating_sub(context_chars);
-    let end_char = (match_char_idx + match_len + context_chars).min(char_indices.len());
-
-    // Extract the substring using char indices
-    let start_byte = char_indices.get(start_char).map(|(b, _)| *b).unwrap_or(0);
-    let end_byte = char_indices
-        .get(end_char)
-        .map(|(b, _)| *b)
-        .unwrap_or(content.len());
-
+    let end_char = (match_char_idx + match_len + context_chars).min(char_positions.len() - 1);
+    
+    // Convert back to byte indices
+    let start_byte = char_positions[start_char];
+    let end_byte = char_positions[end_char];
+    
     content[start_byte..end_byte].to_string()
 }
