@@ -234,3 +234,44 @@
 .animate-shimmer {
   animation: shimmer 2s ease-in-out infinite;
 }
+
+@keyframes shimmer-text {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+.animate-shimmer-text {
+  background: linear-gradient(
+    to right,
+    hsl(var(--primary)) 20%,
+    hsl(var(--primary) / 0.5) 40%,
+    hsl(var(--primary) / 0.8) 60%,
+    hsl(var(--primary)) 80%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shimmer-text 3s linear infinite;
+}
+
+@keyframes gradient-x {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient-x {
+  background-size: 200% 200%;
+  animation: gradient-x 3s ease infinite;
+}

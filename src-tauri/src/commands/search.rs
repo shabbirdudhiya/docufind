@@ -4,9 +4,7 @@ use std::collections::HashSet;
 use tauri::State;
 
 use crate::models::{FileData, SearchFilters, SearchHistoryEntry, SearchResult};
-use crate::search::{
-    apply_filters, has_fts5_data, search_direct_content, search_fts5, search_with_tantivy,
-};
+use crate::search::{apply_filters, search_direct_content, search_fts5, search_with_tantivy};
 use crate::state::AppState;
 
 /// Minimum results from Tantivy before skipping direct search (for ASCII queries)
@@ -63,8 +61,11 @@ pub async fn search_index(
                 &db_path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             ) {
-                println!("[Search] Opened DB connection in {:?}", conn_start.elapsed());
-                
+                println!(
+                    "[Search] Opened DB connection in {:?}",
+                    conn_start.elapsed()
+                );
+
                 println!("[Search] Using FTS5 (Dedicated Connection)");
                 let search_start = std::time::Instant::now();
                 match search_fts5(
@@ -76,15 +77,16 @@ pub async fn search_index(
                     &excluded_folders,
                 ) {
                     Ok(res) => {
-                        println!("[Search] FTS5 search executed in {:?}", search_start.elapsed());
+                        println!(
+                            "[Search] FTS5 search executed in {:?}",
+                            search_start.elapsed()
+                        );
                         results = res;
                         used_fts5 = true;
                     }
                     Err(e) => println!("[FTS5] Error: {}", e),
                 }
             }
-        }
-    }
         }
     }
 
