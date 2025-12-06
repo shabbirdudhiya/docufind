@@ -12,24 +12,48 @@ pub struct ParsedQuery {
 /// 
 /// Supports:
 /// - AND: `hello AND world` or `+hello +world`
-/// - OR: `hello OR world` (default for space-separated)
+/// - OR: `hello OR world` (explicit OR required)
 /// - NOT: `hello NOT world` or `-world`
-/// - Exact phrase: `"hello world"`
+/// - Exact phrase: `"hello world"` or multi-word without operators (default)
+/// 
+/// NOTE: Multi-word queries WITHOUT operators are treated as EXACT PHRASE by default.
+/// Users can use OR to search for either word.
 pub fn parse_simple_query(query: &str) -> ParsedQuery {
     let mut required = Vec::new();
     let mut optional = Vec::new();
     let mut excluded = Vec::new();
     let mut exact_phrases = Vec::new();
     
-    // Extract exact phrases first (quoted strings)
+    // Extract explicit exact phrases first (quoted strings)
     let mut remaining = query.to_string();
     let phrase_regex = Regex::new(r#""([^"]+)""#).unwrap();
+    let mut has_explicit_quotes = false;
     for cap in phrase_regex.captures_iter(query) {
         if let Some(phrase) = cap.get(1) {
             exact_phrases.push(phrase.as_str().to_lowercase());
+            has_explicit_quotes = true;
         }
     }
     remaining = phrase_regex.replace_all(&remaining, " ").to_string();
+    
+    // Check if query uses any operators
+    let has_operators = remaining.to_uppercase().contains(" AND ") 
+        || remaining.to_uppercase().contains(" OR ") 
+        || remaining.to_uppercase().contains(" NOT ")
+        || remaining.contains('+')
+        || remaining.contains('-');
+    
+    // If no operators and no quotes and multiple words, treat entire query as exact phrase
+    let trimmed = remaining.trim();
+    if !has_operators && !has_explicit_quotes && trimmed.contains(' ') {
+        exact_phrases.push(trimmed.to_lowercase());
+        return ParsedQuery {
+            required_terms: exact_phrases.clone(),
+            optional_terms: Vec::new(),
+            excluded_terms: Vec::new(),
+            exact_phrases,
+        };
+    }
     
     // Split by AND/OR keywords
     let parts: Vec<&str> = remaining.split_whitespace().collect();
@@ -46,6 +70,7 @@ pub fn parse_simple_query(query: &str) -> ParsedQuery {
         }
         
         if part.eq_ignore_ascii_case("OR") {
+            // OR is now explicit - just skip the keyword, terms are treated as optional
             i += 1;
             continue;
         }
@@ -79,10 +104,12 @@ pub fn parse_simple_query(query: &str) -> ParsedQuery {
         i += 1;
     }
     
-    // If AND was used anywhere, treat all optional terms as required
+    // If AND was used, treat all optional terms as required
     if has_and {
         required.extend(optional.drain(..));
     }
+    // If OR was used explicitly, keep as optional (any match works)
+    // If neither AND nor OR, single word goes to optional for flexibility
     
     // Exact phrases are always required
     required.extend(exact_phrases.iter().cloned());
@@ -131,9 +158,25 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_simple_query() {
+    fn test_simple_single_word() {
+        let parsed = parse_simple_query("hello");
+        assert_eq!(parsed.optional_terms, vec!["hello"]);
+        assert!(parsed.required_terms.is_empty());
+    }
+    
+    #[test]
+    fn test_multi_word_becomes_exact_phrase() {
+        // Multi-word without operators becomes exact phrase
         let parsed = parse_simple_query("hello world");
-        assert_eq!(parsed.optional_terms, vec!["hello", "world"]);
+        assert!(parsed.optional_terms.is_empty());
+        assert_eq!(parsed.exact_phrases, vec!["hello world"]);
+        assert_eq!(parsed.required_terms, vec!["hello world"]);
+    }
+    
+    #[test]
+    fn test_explicit_or_query() {
+        let parsed = parse_simple_query("hello OR world");
+        assert_eq!(parsed.optional_terms.len(), 2);
         assert!(parsed.required_terms.is_empty());
     }
     
@@ -151,7 +194,7 @@ mod tests {
     }
     
     #[test]
-    fn test_exact_phrase() {
+    fn test_explicit_exact_phrase() {
         let parsed = parse_simple_query("\"exact phrase\"");
         assert_eq!(parsed.exact_phrases, vec!["exact phrase"]);
     }

@@ -13,8 +13,6 @@ pub async fn search_index(
     filters: Option<SearchFilters>,
     state: State<'_, AppState>,
 ) -> Result<Vec<SearchResult>, String> {
-    println!("🔎 Searching for: '{}'", query);
-
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -42,7 +40,6 @@ pub async fn search_index(
     let files = state.index.read().map_err(|e| e.to_string())?;
     
     if has_non_ascii || results.is_empty() {
-        println!("📝 Running direct content search (non-ASCII: {}, tantivy results: {})", has_non_ascii, results.len());
         let direct_results = search_direct_content(&query_lower, &files)?;
         
         // Merge results, avoiding duplicates by path
@@ -75,12 +72,6 @@ pub async fn search_index(
         results = apply_filters(results, &f);
     }
 
-    // Log result types for debugging
-    let word_count = results.iter().filter(|r| r.file.file_type == "word").count();
-    let pptx_count = results.iter().filter(|r| r.file.file_type == "powerpoint").count();
-    let total = results.len();
-    println!("📊 Results breakdown: {} total ({} Word, {} PowerPoint, {} other)", total, word_count, pptx_count, total - word_count - pptx_count);
-
     // Add to search history
     {
         if let Ok(mut history) = state.search_history.lock() {
@@ -88,7 +79,6 @@ pub async fn search_index(
         }
     }
 
-    println!("✅ Search complete: {} results found", results.len());
     Ok(results)
 }
 

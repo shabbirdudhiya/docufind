@@ -72,6 +72,7 @@ pub fn run() {
             commands::save_index,
             commands::load_index,
             commands::clear_index,
+            commands::scan_for_new_doc_files,
             
             // Watching
             start_watching,
@@ -83,14 +84,13 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 if let Ok(mut dir) = state.data_dir.lock() {
                     *dir = Some(data_dir.clone());
-                    println!("📁 Data directory: {:?}", data_dir);
                 };
             }
             
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
+                        .level(log::LevelFilter::Warn) // Only warnings/errors, no Tantivy noise
                         .build(),
                 )?;
             }

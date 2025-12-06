@@ -53,9 +53,9 @@ pub fn create_tantivy_index() -> TantivyComponents {
 /// Search using Tantivy's full-text search (good for English/Latin)
 /// 
 /// Supported query syntax:
-/// - Simple terms: `hello world` (implicit OR)
-/// - AND: `hello AND world` or `+hello +world`
-/// - OR: `hello OR world`
+/// - Multi-word: `hello world` (exact phrase by default)
+/// - AND: `hello AND world` or `+hello +world`  
+/// - OR: `hello OR world` (search for either word)
 /// - Exact phrase: `"hello world"`
 /// - Exclude: `-unwanted` or `NOT unwanted`
 /// - Wildcard: `hel*` (prefix), `h?llo` (single char)
@@ -96,14 +96,28 @@ pub fn search_with_tantivy(
     
     // Try parsing query - avoid fuzzy for non-ASCII or advanced queries
     let has_non_ascii = query.chars().any(|c| !c.is_ascii());
+    
+    // For multi-word queries without explicit operators, wrap in quotes for exact phrase search
+    let processed_query = if !uses_advanced_syntax && !has_non_ascii && query.trim().contains(' ') {
+        // Treat multi-word as exact phrase by default
+        format!("\"{}\"", query.trim())
+    } else {
+        query.to_string()
+    };
+    
     let tantivy_query = if has_non_ascii || uses_advanced_syntax {
         // For Arabic/non-Latin or advanced queries, parse as-is
-        query_parser.parse_query(query)
+        query_parser.parse_query(&processed_query)
     } else {
-        // For simple ASCII text, try fuzzy matching for typo tolerance
-        query_parser
-            .parse_query(&format!("{}~1", query))
-            .or_else(|_| query_parser.parse_query(query))
+        // For simple ASCII text without multiple words, try fuzzy matching for typo tolerance
+        if processed_query.contains('"') {
+            // Exact phrase - no fuzzy
+            query_parser.parse_query(&processed_query)
+        } else {
+            query_parser
+                .parse_query(&format!("{}~1", processed_query))
+                .or_else(|_| query_parser.parse_query(&processed_query))
+        }
     }.map_err(|e| e.to_string())?;
     
     // Execute search - get top 100 results

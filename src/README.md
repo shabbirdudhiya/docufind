@@ -1,9 +1,9 @@
 Local Document Search Desktop App
-A modern, powerful desktop application for searching through your local Microsoft Word, PowerPoint, and text files instantly.
+A modern, powerful desktop application for searching through your local Microsoft Word, PowerPoint, Excel, and text files instantly.
 
 Features
 Local File System Access: Direct access to your local folders and files
-Multiple File Formats: Support for .docx, .pptx, .txt, and .md files
+Multiple File Formats: Support for .doc, .docx, .pptx, .xlsx, .txt, and .md files
 Real-time Search: Instant search with relevance scoring
 File Watching: Automatic updates when files change
 Modern UI: Clean, professional interface with statistics
@@ -66,8 +66,9 @@ Search: Enter your search terms and click "Search" to find matching content
 View Results: Browse through search results with highlighted matches and relevance scores
 Real-time Updates: Enable "Watch" to automatically update the index when files change
 Supported File Types
-Microsoft Word: .docx files
+Microsoft Word: .doc, .docx files
 Microsoft PowerPoint: .pptx files
+Microsoft Excel: .xlsx files
 Text Files: .txt, .md files
 Architecture
 Frontend: Next.js 15 with TypeScript and Tailwind CSS

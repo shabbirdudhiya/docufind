@@ -17,8 +17,6 @@ pub async fn scan_folder(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<Vec<FileData>, String> {
-    println!("🔍 Scanning folder: {}", path);
-
     // Phase 1: Discover all files
     let _ = app.emit(
         "indexing-progress",
@@ -55,7 +53,6 @@ pub async fn scan_folder(
     }
 
     let total = entries.len();
-    println!("📁 Found {} files to index", total);
 
     let _ = app.emit(
         "indexing-progress",
@@ -132,8 +129,6 @@ pub async fn scan_folder(
         },
     );
 
-    println!("✅ Scan complete: {} files in {}", new_files.len(), path);
-
     // Add folder to watched list
     {
         let mut folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
@@ -168,8 +163,6 @@ pub async fn scan_folder(
 /// Remove a folder from the index
 #[tauri::command]
 pub async fn remove_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    println!("🗑️ Removing folder from index: {}", path);
-
     // Remove from watched folders
     {
         let mut folders = state.watched_folders.lock().map_err(|e| e.to_string())?;

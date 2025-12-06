@@ -17,7 +17,7 @@
 ## ✨ Features
 
 - 🔍 **Instant Full-Text Search** - Powered by [Tantivy](https://github.com/quickwit-oss/tantivy) (Rust's Lucene equivalent)
-- 📄 **Multiple Formats** - Search through `.docx`, `.pptx`, `.txt`, and `.md` files
+- 📄 **Multiple Formats** - Search through `.doc`, `.docx`, `.pptx`, `.xlsx`, `.txt`, and `.md` files
 - 📁 **Multi-Folder Support** - Index multiple folders simultaneously
 - 👁️ **File Preview** - Preview document contents without opening them
 - 🔄 **Real-time Watching** - Automatic re-indexing when files change
@@ -91,12 +91,14 @@ docufind-tauri/
 
 ### Supported File Types
 
-| Extension | Type                 |
-| --------- | -------------------- |
-| `.docx`   | Microsoft Word       |
-| `.pptx`   | Microsoft PowerPoint |
-| `.txt`    | Plain Text           |
-| `.md`     | Markdown             |
+| Extension | Type                   |
+| --------- | ---------------------- |
+| `.doc`    | Microsoft Word 97-2003 |
+| `.docx`   | Microsoft Word         |
+| `.pptx`   | Microsoft PowerPoint   |
+| `.xlsx`   | Microsoft Excel        |
+| `.txt`    | Plain Text             |
+| `.md`     | Markdown               |
 
 ### Auto-Update
 

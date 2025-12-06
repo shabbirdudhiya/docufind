@@ -198,6 +198,25 @@ const setupTauriListeners = async () => {
         emit("indexing-progress", event.payload);
       }
     );
+
+    // Listen for .doc indexing progress events
+    await listen<{
+      current: number;
+      total: number;
+      filename: string;
+      phase: string;
+    }>("doc-indexing-progress", (event) => {
+      console.log("🔥 TAURI EVENT doc-indexing-progress:", event.payload);
+      emit("doc-indexing-progress", event.payload);
+    });
+
+    // Listen for .doc indexing completion
+    listen<{ found: number; indexed: number }>(
+      "doc-indexing-complete",
+      (event) => {
+        emit("doc-indexing-complete", event.payload);
+      }
+    );
   } catch (e) {
     console.error("Failed to setup Tauri listeners:", e);
   }
@@ -413,6 +432,35 @@ export const tauriAPI = {
     }
   },
 
+  // Scan for new .doc files in existing indexed folders (background)
+  scanForNewDocFiles: async (): Promise<{
+    success: boolean;
+    found?: number;
+    indexed?: number;
+    started?: boolean;
+    skipped?: boolean;
+    message?: string;
+    error?: string;
+  }> => {
+    if (typeof window === "undefined") {
+      return { success: false, error: "Not available during SSR" };
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    try {
+      const result = await invoke<{
+        found: number;
+        indexed: number;
+        started?: boolean;
+        skipped?: boolean;
+        message: string;
+      }>("scan_for_new_doc_files");
+      return { success: true, ...result };
+    } catch (e: any) {
+      return { success: false, error: e.message || e };
+    }
+  },
+
   // Get excluded folders
   getExcludedFolders: async () => {
     if (typeof window === "undefined") {
@@ -490,7 +538,6 @@ export const tauriAPI = {
       const results = await invoke<RustSearchResult[]>("search_index", {
         query,
       });
-      console.log("Raw Rust results:", results);
 
       const mappedResults: SearchResult[] = results.map((r) => ({
         file: {
@@ -662,6 +709,18 @@ export const tauriAPI = {
   onIndexingProgress: (cb: Function) => {
     listeners["indexing-progress"] = listeners["indexing-progress"] || [];
     listeners["indexing-progress"].push(cb);
+  },
+  onDocIndexingProgress: (cb: Function) => {
+    console.log("📝 Registering doc-indexing-progress listener");
+    listeners["doc-indexing-progress"] =
+      listeners["doc-indexing-progress"] || [];
+    listeners["doc-indexing-progress"].push(cb);
+  },
+  onDocIndexingComplete: (cb: Function) => {
+    console.log("📝 Registering doc-indexing-complete listener");
+    listeners["doc-indexing-complete"] =
+      listeners["doc-indexing-complete"] || [];
+    listeners["doc-indexing-complete"].push(cb);
   },
   removeAllListeners: (channel: string) => {
     delete listeners[channel];

@@ -119,7 +119,6 @@ pub async fn start_watching(app: AppHandle, state: State<'_, AppState>) -> Resul
         }
     });
 
-    println!("👀 Started watching {} folders", folders.len());
     Ok(())
 }
 
@@ -128,6 +127,5 @@ pub async fn start_watching(app: AppHandle, state: State<'_, AppState>) -> Resul
 pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), String> {
     let mut watcher_guard = state.watcher.lock().map_err(|e| e.to_string())?;
     *watcher_guard = None;
-    println!("🛑 Stopped watching folders");
     Ok(())
 }

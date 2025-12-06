@@ -80,6 +80,51 @@ interface SearchHistoryItem {
   resultsCount: number
 }
 
+// Tips and facts to show during loading
+const LOADING_TIPS = [
+  { icon: '💡', text: 'Tip: Use quotes for exact phrase matching, e.g., "annual report"' },
+  { icon: '🔍', text: 'DocuFind indexes content inside Word, PowerPoint, and Excel files' },
+  { icon: '⚡', text: 'Your search index is saved automatically - no re-indexing needed!' },
+  { icon: '📁', text: 'Tip: You can exclude specific folders from search results in Settings' },
+  { icon: '🎯', text: 'Click any result to preview, or use "Open & Jump" to go directly to the match' },
+  { icon: '🌙', text: 'Tip: Toggle dark mode in Settings for comfortable nighttime use' },
+  { icon: '📊', text: 'DocuFind can search through thousands of documents in milliseconds' },
+  { icon: '🔄', text: 'Enable File Watching to auto-update your index when files change' },
+  { icon: '🌐', text: 'Arabic and RTL text is automatically detected and displayed correctly' },
+  { icon: '⌨️', text: 'Tip: Press Enter to search, results appear instantly as you type' },
+  { icon: '📝', text: 'Fun fact: The average office worker searches for files 8 times per day' },
+  { icon: '🚀', text: 'DocuFind uses Tantivy, the same search engine tech as major search platforms' },
+  { icon: '💾', text: 'Your index is stored locally - your documents never leave your computer' },
+  { icon: '🎨', text: 'Tip: Change the preview font in the preview pane for better readability' },
+  { icon: '📈', text: 'Fun fact: Workers spend 20% of their time searching for documents' },
+]
+
+// Rotating tip component
+function RotatingTip() {
+  const [currentTip, setCurrentTip] = useState(0)
+  const [isVisible, setIsVisible] = useState(true)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIsVisible(false)
+      setTimeout(() => {
+        setCurrentTip((prev) => (prev + 1) % LOADING_TIPS.length)
+        setIsVisible(true)
+      }, 300)
+    }, 4000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const tip = LOADING_TIPS[currentTip]
+
+  return (
+    <div className={`flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 transition-all duration-300 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
+      <span className="text-base">{tip.icon}</span>
+      <span>{tip.text}</span>
+    </div>
+  )
+}
+
 // Elapsed time component that updates every second
 function ElapsedTime({ startTime }: { startTime: Date }) {
   const [elapsed, setElapsed] = useState(0)
@@ -125,6 +170,7 @@ export default function Home() {
   const [isWatching, setIsWatching] = useState(false)
   const [isLoadingIndex, setIsLoadingIndex] = useState(true) // Loading saved index on startup
   const [scanProgress, setScanProgress] = useState(0)
+  const [searchDuration, setSearchDuration] = useState<number | null>(null) // Search duration in ms
   const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState({
     totalFiles: 0,
@@ -213,6 +259,8 @@ export default function Home() {
             Analytics.indexLoaded(filesResult.files.length)
           }
           console.log(`✅ Loaded ${result.fileCount} files from ${result.folderCount} folders`)
+          setIsLoadingIndex(false)
+          return
         } else {
           console.log('📭 No saved index found, starting fresh')
         }
@@ -292,15 +340,20 @@ export default function Home() {
       setCurrentFileName(data.filename)
       
       if (phase === 'discovering') {
-        setScanProgress(5) // Show some progress during discovery
+        // Discovery phase: show 0-10%
+        setScanProgress(Math.min(10, data.current))
         setLoadingMessage('Discovering files...')
       } else if (phase === 'finalizing') {
-        setScanProgress(98)
+        // Finalizing: show 95-98% (commit can take time)
+        setScanProgress(95)
         setLoadingMessage('Building search index...')
       } else {
-        // Indexing phase - calculate real percentage
-        const percentage = data.total > 0 ? Math.round((data.current / data.total) * 95) + 3 : 0
-        setScanProgress(Math.min(percentage, 97))
+        // Indexing phase: show 10-95% based on actual file progress
+        // Reserve 0-10% for discovery and 95-100% for finalizing
+        const percentage = data.total > 0 
+          ? Math.round((data.current / data.total) * 85) + 10 
+          : 10
+        setScanProgress(Math.min(percentage, 94))
         setLoadingMessage(`Processing: ${data.filename}`)
       }
     })
@@ -460,24 +513,18 @@ export default function Home() {
     setScanProgress(0)
     setLoadingProgress(0)
     setLoadingMessage('Scanning folder for documents...')
+    setIndexingStartTime(new Date())
 
-    // Simulate progress animation
-    let progress = 0
-    progressInterval.current = setInterval(() => {
-      progress += Math.random() * 10
-      if (progress > 85) progress = 85
-      setScanProgress(progress)
-      setLoadingProgress(progress)
-    }, 300)
+    // No simulated progress - we rely on real backend events now
+    // The backend emits progress events during scanning
 
     try {
       const result = await tauriAPI.scanFolder(folderPath)
-      if (progressInterval.current) clearInterval(progressInterval.current)
 
       if (result.success && result.files) {
-        setLoadingMessage(`Found ${result.files.length} files! Indexing...`)
-        setScanProgress(95)
-        setLoadingProgress(95)
+        setLoadingMessage(`Found ${result.files.length} files! Finalizing...`)
+        setScanProgress(98)
+        setLoadingProgress(98)
         
         // Track folder added analytics
         Analytics.folderAdded(result.files.length)
@@ -491,20 +538,27 @@ export default function Home() {
           return allFiles
         })
         
-        setScanProgress(100)
-        setLoadingProgress(100)
+        // Smooth transition to 100%
+        setTimeout(() => {
+          setScanProgress(100)
+          setLoadingProgress(100)
+        }, 200)
 
-        // Close loading overlay after a brief delay
-        setTimeout(() => setShowLoadingOverlay(false), 500)
+        // Close loading overlay after showing 100%
+        setTimeout(() => {
+          setShowLoadingOverlay(false)
+          setIndexingStartTime(null)
+        }, 800)
       } else {
         setError(result.error || 'Failed to scan folder')
         setShowLoadingOverlay(false)
+        setIndexingStartTime(null)
       }
     } catch (err) {
-      if (progressInterval.current) clearInterval(progressInterval.current)
       setError('Scanning failed')
       console.error(err)
       setShowLoadingOverlay(false)
+      setIndexingStartTime(null)
     } finally {
       setIsScanning(false)
     }
@@ -572,6 +626,7 @@ export default function Home() {
 
     console.log(`🔎 Searching for "${searchQuery}" in ${files.length} files`)
     setIsSearching(true)
+    setSearchDuration(null)
     setShowLoadingOverlay(true)
     setLoadingProgress(0)
     setLoadingMessage('Searching through documents...')
@@ -584,13 +639,19 @@ export default function Home() {
       setLoadingProgress(progress)
     }, 200)
 
+    const startTime = performance.now()
+    
     try {
       const result = await tauriAPI.searchFiles(searchQuery, selectedFolder)
+      const endTime = performance.now()
+      const duration = endTime - startTime
+      setSearchDuration(duration)
+      
       console.log('🎯 Search result:', result)
       if (progressInterval.current) clearInterval(progressInterval.current)
       setLoadingProgress(100)
       if (result.success && result.results) {
-        console.log(`✅ Found ${result.results.length} results`, result.results)
+        console.log(`✅ Found ${result.results.length} results in ${duration.toFixed(0)}ms`, result.results)
         setLoadingMessage(`Found ${result.results.length} results!`)
         setSearchResults(result.results)
         addToSearchHistory(searchQuery, result.results.length)
@@ -805,7 +866,6 @@ export default function Home() {
               <Separator orientation="vertical" className="h-6" />
               <h1 className="font-semibold text-lg">
                 {activeTab === 'search' && 'Search Documents'}
-                {activeTab === 'files' && 'File Library'}
                 {activeTab === 'settings' && 'Settings'}
                 {activeTab === 'help' && 'Help & About'}
               </h1>
@@ -816,7 +876,7 @@ export default function Home() {
               {files.length > 0 && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className={`h-2 w-2 rounded-full ${isWatching ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground/30'}`} />
-                  <span>{files.length} files</span>
+                  <span>{stats.totalFiles.toLocaleString()} documents indexed</span>
                 </div>
               )}
             </div>
@@ -1052,8 +1112,12 @@ export default function Home() {
                   ) : filteredResults.length > 0 ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
                       <div className="flex items-center justify-between px-1">
-                        <h3 className="text-sm font-medium text-muted-foreground">
-                          Found <span className="text-foreground font-semibold">{filteredResults.length}</span> results
+                        <h3 className="text-sm text-muted-foreground">
+                          Found <span className="text-foreground font-semibold">{filteredResults.length}</span> results in{' '}
+                          <span className="text-foreground font-semibold">{stats.totalFiles.toLocaleString()}</span> documents
+                          {searchDuration !== null && (
+                            <span className="text-muted-foreground/70"> ({(searchDuration / 1000).toFixed(2)} seconds)</span>
+                          )}
                         </h3>
                         <div className="flex gap-2">
                           <Popover open={showSearchHistory} onOpenChange={setShowSearchHistory}>
@@ -1201,12 +1265,19 @@ export default function Home() {
                         <div className="w-24 h-24 bg-primary/5 rounded-full flex items-center justify-center mb-6 ring-1 ring-primary/20">
                           <Search className="h-10 w-10 text-primary/40" />
                         </div>
-                        {files.length > 0 ? (
+                        {stats.totalFiles > 0 ? (
                           <>
                             <h3 className="text-2xl font-semibold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">Ready to search</h3>
-                            <p className="text-muted-foreground max-w-md mx-auto leading-relaxed">
-                              Enter keywords above to instantly search through your <span className="font-medium text-foreground">{files.length}</span> indexed documents.
+                            <p className="text-muted-foreground max-w-md mx-auto leading-relaxed mb-4">
+                              Search through <span className="font-semibold text-foreground">{stats.totalFiles.toLocaleString()}</span> documents instantly.
                             </p>
+                            <div className="flex gap-4 text-xs text-muted-foreground/70">
+                              <span>{stats.wordFiles} Word</span>
+                              <span>•</span>
+                              <span>{stats.powerPointFiles} PowerPoint</span>
+                              <span>•</span>
+                              <span>{stats.textFiles} Text</span>
+                            </div>
                           </>
                         ) : (
                           <>
@@ -1223,82 +1294,6 @@ export default function Home() {
                       </div>
                     )
                   )}
-                </div>
-              )}
-
-              {/* Files View */}
-              {activeTab === 'files' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <Card className="glass-card">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Total Files</p>
-                          <p className="text-2xl font-bold">{stats.totalFiles}</p>
-                        </div>
-                        <Database className="h-8 w-8 text-primary/20" />
-                      </CardContent>
-                    </Card>
-                    <Card className="glass-card">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Word</p>
-                          <p className="text-2xl font-bold text-blue-500">{stats.wordFiles}</p>
-                        </div>
-                        <FileText className="h-8 w-8 text-blue-500/20" />
-                      </CardContent>
-                    </Card>
-                    <Card className="glass-card">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-muted-foreground">PowerPoint</p>
-                          <p className="text-2xl font-bold text-orange-500">{stats.powerPointFiles}</p>
-                        </div>
-                        <FileText className="h-8 w-8 text-orange-500/20" />
-                      </CardContent>
-                    </Card>
-                    <Card className="glass-card">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Text</p>
-                          <p className="text-2xl font-bold text-emerald-500">{stats.textFiles}</p>
-                        </div>
-                        <File className="h-8 w-8 text-emerald-500/20" />
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  <Card className="glass-card">
-                    <CardHeader>
-                      <CardTitle>Indexed Files</CardTitle>
-                      <CardDescription>List of all documents currently in the index</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="h-[500px]">
-                        <div className="space-y-2">
-                          {files.map((file, i) => (
-                            <div key={i} className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors group">
-                              <div className="flex items-center gap-3">
-                                {getFileIcon(file.type)}
-                                <div>
-                                  <p className="font-medium text-sm">{file.name}</p>
-                                  <p className="text-xs text-muted-foreground">{formatFileSize(file.size)} • {new Date(file.lastModified).toLocaleDateString()}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary" onClick={() => openFile(file.path)} title="Open">
-                                  <ExternalLink className="h-4 w-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => setFileToDelete(file.path)} title="Delete">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </CardContent>
-                  </Card>
                 </div>
               )}
 
@@ -1607,39 +1602,50 @@ export default function Home() {
       </div>
 
       {/* Loading Overlay */}
-      {/* Loading Overlay */}
       {showLoadingOverlay && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-md border-none shadow-2xl bg-card/90 backdrop-blur-xl ring-1 ring-border/50">
+          <Card className="w-full max-w-lg border-none shadow-2xl bg-card/90 backdrop-blur-xl ring-1 ring-border/50">
             <CardContent className="pt-10 pb-8 flex flex-col items-center text-center space-y-6">
 
-              {/* Animation */}
-              <div className="relative w-24 h-24">
-                <div className="absolute inset-0 bg-primary/10 rounded-full animate-ping opacity-20" />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="relative w-16 h-16 bg-primary/20 rounded-2xl flex items-center justify-center overflow-hidden">
-                    <FileText className="h-8 w-8 text-primary animate-bounce" />
-                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary/30 animate-pulse" />
+              {/* Enhanced Animation */}
+              <div className="relative w-28 h-28">
+                {/* Outer rotating ring */}
+                <div className="absolute inset-0 rounded-full border-2 border-primary/20 border-t-primary animate-spin" style={{ animationDuration: '2s' }} />
+                {/* Middle pulsing ring */}
+                <div className="absolute inset-2 rounded-full bg-primary/5 animate-pulse" />
+                {/* Inner content */}
+                <div className="absolute inset-4 flex items-center justify-center">
+                  <div className="relative w-16 h-16 bg-gradient-to-br from-primary/20 to-primary/10 rounded-2xl flex items-center justify-center overflow-hidden shadow-lg">
+                    <FileText className="h-8 w-8 text-primary" />
+                    {/* Scanning line effect */}
+                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/20 to-transparent animate-scan" />
                   </div>
                 </div>
-                {/* Flying particles */}
-                <div className="absolute -top-2 -right-2 w-4 h-4 bg-blue-500/20 rounded-full animate-bounce delay-100" />
-                <div className="absolute -bottom-2 -left-2 w-3 h-3 bg-orange-500/20 rounded-full animate-bounce delay-300" />
+                {/* Floating document icons */}
+                <div className="absolute -top-1 -right-1 w-6 h-6 bg-blue-500/20 rounded-lg flex items-center justify-center animate-float">
+                  <FileText className="h-3 w-3 text-blue-500" />
+                </div>
+                <div className="absolute -bottom-1 -left-1 w-5 h-5 bg-orange-500/20 rounded-lg flex items-center justify-center animate-float-delayed">
+                  <FileText className="h-2.5 w-2.5 text-orange-500" />
+                </div>
+                <div className="absolute top-1/2 -right-3 w-4 h-4 bg-green-500/20 rounded-lg flex items-center justify-center animate-float" style={{ animationDelay: '0.5s' }}>
+                  <FileText className="h-2 w-2 text-green-500" />
+                </div>
               </div>
 
               <div className="space-y-2 w-full">
                 <h3 className="text-xl font-bold tracking-tight">
                   {isScanning ? (
-                    indexingPhase === 'discovering' ? 'Discovering Files' :
-                    indexingPhase === 'finalizing' ? 'Finalizing Index' :
-                    'Building Search Index'
-                  ) : 'Searching...'}
+                    indexingPhase === 'discovering' ? '🔍 Discovering Files' :
+                    indexingPhase === 'finalizing' ? '✨ Finalizing Index' :
+                    '📚 Building Search Index'
+                  ) : '🔎 Searching...'}
                 </h3>
                 {isScanning && (
-                  <p className="text-sm text-muted-foreground font-medium text-primary/80">
+                  <p className="text-sm text-muted-foreground">
                     {indexingPhase === 'discovering' ? 'Scanning folder structure...' :
-                     indexingPhase === 'finalizing' ? 'Almost done!' :
-                     'This process only happens once'}
+                     indexingPhase === 'finalizing' ? 'Almost done! Optimizing for fast search...' :
+                     'Indexing your documents for lightning-fast search'}
                   </p>
                 )}
               </div>
@@ -1649,24 +1655,31 @@ export default function Home() {
                 <div className="flex justify-between text-xs text-muted-foreground font-mono px-1">
                   <span className="flex items-center gap-1">
                     {isScanning && totalFilesToProcess > 0 && (
-                      <span className="text-primary font-semibold">{filesProcessed}/{totalFilesToProcess} files</span>
+                      <span className="text-primary font-semibold">{filesProcessed.toLocaleString()}/{totalFilesToProcess.toLocaleString()} files</span>
                     )}
                     {isScanning && totalFilesToProcess === 0 && indexingPhase === 'discovering' && (
                       <span className="animate-pulse">Scanning...</span>
                     )}
                     {!isScanning && <span>{loadingMessage.split(':')[0]}</span>}
                   </span>
-                  <span className="font-semibold">{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
+                  <span className="font-semibold text-primary">{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
                 </div>
                 
-                {/* Progress bar */}
-                <Progress value={isScanning ? scanProgress : loadingProgress} className="h-2.5 w-full" />
+                {/* Enhanced Progress bar with gradient */}
+                <div className="relative h-3 w-full bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary via-primary to-primary/80 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${isScanning ? scanProgress : loadingProgress}%` }}
+                  />
+                  {/* Shimmer effect */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+                </div>
                 
                 {/* Current file being processed */}
                 {isScanning && currentFileName && indexingPhase === 'indexing' && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground/80 px-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    <p className="truncate max-w-[320px]" title={currentFileName}>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground/80 px-1 py-1 bg-muted/30 rounded-md">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
+                    <p className="truncate" title={currentFileName}>
                       {currentFileName}
                     </p>
                   </div>
@@ -1677,6 +1690,13 @@ export default function Home() {
                   <ElapsedTime startTime={indexingStartTime} />
                 )}
               </div>
+
+              {/* Rotating tips */}
+              {isScanning && (
+                <div className="w-full pt-2 border-t border-border/50">
+                  <RotatingTip />
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

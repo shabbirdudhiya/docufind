@@ -58,17 +58,6 @@ export function AppSidebar({
                     </SidebarMenuItem>
                     <SidebarMenuItem>
                         <SidebarMenuButton
-                            isActive={activeTab === "files"}
-                            onClick={() => setActiveTab("files")}
-                            tooltip="File Library"
-                            className="h-10 px-4 rounded-lg transition-all duration-200 hover:bg-accent hover:text-accent-foreground data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:shadow-md"
-                        >
-                            <FileText className="h-4 w-4" />
-                            <span className="font-medium">File Library</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                    <SidebarMenuItem>
-                        <SidebarMenuButton
                             isActive={activeTab === "settings"}
                             onClick={() => setActiveTab("settings")}
                             tooltip="Settings"
