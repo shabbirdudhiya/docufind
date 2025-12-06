@@ -1,11 +1,11 @@
-use tauri::State;
+use rusqlite::{Connection, OpenFlags};
 use rustc_hash::FxHashSet;
 use std::collections::HashSet;
+use tauri::State;
 
-use crate::models::{FileData, SearchResult, SearchFilters, SearchHistoryEntry};
+use crate::models::{FileData, SearchFilters, SearchHistoryEntry, SearchResult};
 use crate::search::{
-    search_with_tantivy, search_direct_content, apply_filters,
-    search_fts5, has_fts5_data,
+    apply_filters, has_fts5_data, search_direct_content, search_fts5, search_with_tantivy,
 };
 use crate::state::AppState;
 
@@ -15,12 +15,12 @@ const MIN_TANTIVY_RESULTS: usize = 5;
 const DEFAULT_MAX_RESULTS: usize = 100;
 
 /// Search the index with optional filters
-/// 
+///
 /// SEARCH STRATEGY (Priority Order):
 /// 1. SQLite FTS5 (preferred) - Instant search for ALL languages including Arabic
 /// 2. Tantivy (fallback for ASCII) - Fast indexed search for English
 /// 3. Direct search (last resort) - Linear scan if no index available
-/// 
+///
 /// FTS5 is now the primary search engine because:
 /// - Works with Arabic, Chinese, Hebrew, and all Unicode
 /// - Uses inverted index (O(log n) vs O(n))
@@ -36,14 +36,12 @@ pub async fn search_index(
     }
 
     // Extract pagination/scope options from filters
-    let max_results = filters.as_ref()
+    let max_results = filters
+        .as_ref()
         .and_then(|f| f.max_results)
         .unwrap_or(DEFAULT_MAX_RESULTS);
-    let offset = filters.as_ref()
-        .and_then(|f| f.offset)
-        .unwrap_or(0);
-    let file_path_filter = filters.as_ref()
-        .and_then(|f| f.file_path.as_deref());
+    let offset = filters.as_ref().and_then(|f| f.offset).unwrap_or(0);
+    let file_path_filter = filters.as_ref().and_then(|f| f.file_path.as_deref());
 
     // Get excluded folders for filtering
     let excluded_folders: HashSet<String> = state
@@ -52,64 +50,77 @@ pub async fn search_index(
         .map_err(|e| e.to_string())?
         .clone();
 
-    let mut results: Vec<SearchResult>;
-    
-    // Try FTS5 search first (fastest, works with all languages)
-    let fts5_available = {
-        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-        if let Some(ref conn) = *db_guard {
-            let available = has_fts5_data(conn);
-            println!("[Search] FTS5 available: {}", available);
-            available
-        } else {
-            println!("[Search] No database connection");
-            false
+    let mut results: Vec<SearchResult> = Vec::new();
+    let mut used_fts5 = false;
+
+    // Try FTS5 search first using a dedicated read-only connection to avoid writer lock
+    if let Some(data_dir) = state.get_data_dir() {
+        let db_path = data_dir.join("docufind.db");
+        if db_path.exists() {
+            // Open READ-ONLY and NO_MUTEX (multi-threaded mode) to bypass writer lock
+            let conn_start = std::time::Instant::now();
+            if let Ok(conn) = Connection::open_with_flags(
+                &db_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            ) {
+                println!("[Search] Opened DB connection in {:?}", conn_start.elapsed());
+                
+                println!("[Search] Using FTS5 (Dedicated Connection)");
+                let search_start = std::time::Instant::now();
+                match search_fts5(
+                    &conn,
+                    &query,
+                    max_results + offset,
+                    0,
+                    file_path_filter,
+                    &excluded_folders,
+                ) {
+                    Ok(res) => {
+                        println!("[Search] FTS5 search executed in {:?}", search_start.elapsed());
+                        results = res;
+                        used_fts5 = true;
+                    }
+                    Err(e) => println!("[FTS5] Error: {}", e),
+                }
+            }
         }
-    };
-    
-    if fts5_available {
-        println!("[Search] Using FTS5 for query: {}", query);
-        // Use FTS5 for instant multilingual search
-        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
-        if let Some(ref conn) = *db_guard {
-            results = search_fts5(
-                conn,
-                &query,
-                max_results + offset, // Get extra to account for offset
-                0, // We handle offset below after filters
-                file_path_filter,
-                &excluded_folders,
-            )?;
-        } else {
-            results = Vec::new();
+    }
         }
-    } else {
-        // Fallback: No FTS5 data, use old approach
+    }
+
+    if !used_fts5 {
+        println!("[Search] Fallback: FTS5 unavailable or failed. Using fallback engines.");
         let has_non_ascii = query.chars().any(|c| !c.is_ascii());
-        
         if file_path_filter.is_some() {
             // Single-file search mode
+            println!("[Search] Strategy: Direct Search (Single File)");
             let files = state.index.read().map_err(|e| e.to_string())?;
             results = search_direct_content(&query, &files, Some(1000), file_path_filter)?;
         } else if has_non_ascii {
             // Non-ASCII: Direct search
+            println!("[Search] Strategy: Direct Search (Non-ASCII)");
             let files = state.index.read().map_err(|e| e.to_string())?;
             results = search_direct_content(&query, &files, Some(max_results + offset), None)?;
         } else {
             // ASCII: Tantivy first
+            println!("[Search] Strategy: Tantivy (English/ASCII)");
             results = search_with_tantivy(
                 &query,
                 &state.tantivy_index,
                 &state.tantivy_reader,
                 &state.tantivy_schema,
             )?;
-            
+
+            println!("[Search] Tantivy found {} results", results.len());
+
             if results.len() < MIN_TANTIVY_RESULTS {
+                println!("[Search] Minimal Tantivy results, supplementing with Direct Search");
                 let files = state.index.read().map_err(|e| e.to_string())?;
-                let direct_results = search_direct_content(&query, &files, Some(max_results), None)?;
-                
+                let direct_results =
+                    search_direct_content(&query, &files, Some(max_results), None)?;
+
                 if !direct_results.is_empty() {
-                    let existing_paths: FxHashSet<String> = 
+                    let existing_paths: FxHashSet<String> =
                         results.iter().map(|r| r.file.path.clone()).collect();
                     for dr in direct_results {
                         if !existing_paths.contains(&dr.file.path) {
@@ -119,7 +130,7 @@ pub async fn search_index(
                 }
             }
         }
-        
+
         // Filter excluded folders (FTS5 already does this)
         if file_path_filter.is_none() && !excluded_folders.is_empty() {
             results.retain(|r| {
@@ -134,7 +145,7 @@ pub async fn search_index(
     if let Some(ref f) = filters {
         results = apply_filters(results, f);
     }
-    
+
     // Apply pagination
     if offset > 0 {
         results = results.into_iter().skip(offset).collect();
@@ -207,7 +218,7 @@ pub async fn get_index_stats(state: State<'_, AppState>) -> Result<serde_json::V
 #[tauri::command]
 pub async fn get_all_files(state: State<'_, AppState>) -> Result<Vec<FileData>, String> {
     let index = state.index.read().map_err(|e| e.to_string())?;
-    
+
     // Return files without content to reduce payload size
     Ok(index
         .iter()

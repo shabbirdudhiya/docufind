@@ -57,6 +57,7 @@ import { FolderTree } from '@/components/FolderTree'
 import { tauriAPI, DocumentContent } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
 import { initAnalytics, Analytics } from '@/lib/firebase'
+import { SearchLoadingState } from '@/components/SearchLoadingState'
 
 interface FileData {
   path: string
@@ -82,76 +83,7 @@ interface SearchHistoryItem {
   resultsCount: number
 }
 
-// Tips and facts to show during loading
-const LOADING_TIPS = [
-  { icon: '💡', text: 'Tip: Use quotes for exact phrase matching, e.g., "annual report"' },
-  { icon: '🔍', text: 'DocuFind indexes content inside Word, PowerPoint, and Excel files' },
-  { icon: '⚡', text: 'Your search index is saved automatically - no re-indexing needed!' },
-  { icon: '📁', text: 'Tip: You can exclude specific folders from search results in Settings' },
-  { icon: '🎯', text: 'Click any result to preview, or use "Open & Jump" to go directly to the match' },
-  { icon: '🌙', text: 'Tip: Toggle dark mode in Settings for comfortable nighttime use' },
-  { icon: '📊', text: 'DocuFind can search through thousands of documents in milliseconds' },
-  { icon: '🔄', text: 'Enable File Watching to auto-update your index when files change' },
-  { icon: '🌐', text: 'Arabic and RTL text is automatically detected and displayed correctly' },
-  { icon: '⌨️', text: 'Tip: Press Enter to search, results appear instantly as you type' },
-  { icon: '📝', text: 'Fun fact: The average office worker searches for files 8 times per day' },
-  { icon: '🚀', text: 'DocuFind uses Tantivy, the same search engine tech as major search platforms' },
-  { icon: '💾', text: 'Your index is stored locally - your documents never leave your computer' },
-  { icon: '🎨', text: 'Tip: Change the preview font in the preview pane for better readability' },
-  { icon: '📈', text: 'Fun fact: Workers spend 20% of their time searching for documents' },
-]
 
-// Rotating tip component
-function RotatingTip() {
-  const [currentTip, setCurrentTip] = useState(0)
-  const [isVisible, setIsVisible] = useState(true)
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setIsVisible(false)
-      setTimeout(() => {
-        setCurrentTip((prev) => (prev + 1) % LOADING_TIPS.length)
-        setIsVisible(true)
-      }, 300)
-    }, 4000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const tip = LOADING_TIPS[currentTip]
-
-  return (
-    <div className={`flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 transition-all duration-300 ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
-      <span className="text-base">{tip.icon}</span>
-      <span>{tip.text}</span>
-    </div>
-  )
-}
-
-// Elapsed time component that updates every second
-function ElapsedTime({ startTime }: { startTime: Date }) {
-  const [elapsed, setElapsed] = useState(0)
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [startTime])
-
-  const formatTime = (seconds: number) => {
-    if (seconds < 60) return `${seconds}s`
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}m ${secs}s`
-  }
-
-  return (
-    <p className="text-xs text-muted-foreground/60 mt-2">
-      Elapsed: {formatTime(elapsed)}
-      {elapsed > 30 && <span className="ml-2 text-yellow-500/80">• Large folder detected</span>}
-    </p>
-  )
-}
 
 export default function Home() {
   const [isElectron, setIsElectron] = useState(true) // Always true for Tauri app context
@@ -289,12 +221,12 @@ export default function Home() {
   useEffect(() => {
     setIsMounted(true)
     setIsElectron(true)
-    
+
     // Initialize Firebase Analytics
     initAnalytics().then(() => {
       Analytics.appLaunched()
     })
-    
+
     const savedDarkMode = localStorage.getItem('darkMode') === 'true'
     setIsDarkMode(savedDarkMode)
     if (savedDarkMode) document.documentElement.classList.add('dark')
@@ -351,7 +283,7 @@ export default function Home() {
       setFilesProcessed(data.current)
       setTotalFilesToProcess(data.total)
       setCurrentFileName(data.filename)
-      
+
       if (phase === 'discovering') {
         // Discovery phase: show 0-10%
         setScanProgress(Math.min(10, data.current))
@@ -363,8 +295,8 @@ export default function Home() {
       } else {
         // Indexing phase: show 10-95% based on actual file progress
         // Reserve 0-10% for discovery and 95-100% for finalizing
-        const percentage = data.total > 0 
-          ? Math.round((data.current / data.total) * 85) + 10 
+        const percentage = data.total > 0
+          ? Math.round((data.current / data.total) * 85) + 10
           : 10
         setScanProgress(Math.min(percentage, 94))
         setLoadingMessage(`Processing: ${data.filename}`)
@@ -493,21 +425,21 @@ export default function Home() {
     setPreviewOpen(true)
     setPreviewContent('')
     setPreviewStructuredContent(null)
-    
+
     try {
       // Fetch both plain text and structured content in parallel
       const [textResult, structuredResult] = await Promise.all([
         tauriAPI.extractContent(file.path),
         tauriAPI.extractContentStructured(file.path)
       ])
-      
+
       // Set plain text content (fallback)
       if (textResult.success) {
         setPreviewContent(textResult.content || 'No content available')
       } else {
         setPreviewContent('Failed to load preview: ' + (textResult.error || 'Unknown error'))
       }
-      
+
       // Set structured content if available
       if (structuredResult.success && structuredResult.content) {
         setPreviewStructuredContent(structuredResult.content)
@@ -538,10 +470,10 @@ export default function Home() {
         setLoadingMessage(`Found ${result.files.length} files! Finalizing...`)
         setScanProgress(98)
         setLoadingProgress(98)
-        
+
         // Track folder added analytics
         Analytics.folderAdded(result.files.length)
-        
+
         // Append new files to existing files (for multi-folder support)
         setFiles(prevFiles => {
           // Remove any existing files from this folder to avoid duplicates
@@ -550,7 +482,7 @@ export default function Home() {
           updateStats(allFiles)
           return allFiles
         })
-        
+
         // Smooth transition to 100%
         setTimeout(() => {
           setScanProgress(100)
@@ -641,13 +573,14 @@ export default function Home() {
     const maxResults = 100
 
     console.log(`🔎 Searching for "${searchQuery}" ${loadMore ? '(loading more)' : ''} in ${files.length} files`)
-    
+
     if (loadMore) {
       setIsLoadingMore(true)
     } else {
       setIsSearching(true)
       setSearchDuration(null)
-      setShowLoadingOverlay(true)
+      // Removed overlay to show results inline
+      // setShowLoadingOverlay(true)
       setLoadingProgress(0)
       setLoadingMessage('Searching through documents...')
       setCurrentOffset(0)
@@ -664,39 +597,39 @@ export default function Home() {
     }
 
     const startTime = performance.now()
-    
+
     try {
       // Build search options based on scope
       const searchOptions: { filePath?: string; maxResults?: number; offset?: number } = {
         maxResults: maxResults + 1, // Get one extra to check if there are more
         offset,
       }
-      
+
       if (searchScope.type === 'file' && searchScope.path) {
         searchOptions.filePath = searchScope.path
       }
-      
+
       const result = await tauriAPI.searchFiles(
-        searchQuery, 
+        searchQuery,
         searchScope.type === 'folder' ? searchScope.path || null : selectedFolder,
         searchOptions
       )
-      
+
       const endTime = performance.now()
       const duration = endTime - startTime
       if (!loadMore) setSearchDuration(duration)
-      
+
       console.log('🎯 Search result:', result)
       if (progressInterval.current) clearInterval(progressInterval.current)
       if (!loadMore) setLoadingProgress(100)
-      
+
       if (result.success && result.results) {
         // Check if there are more results
         const hasMore = result.results.length > maxResults
         const displayResults = hasMore ? result.results.slice(0, maxResults) : result.results
-        
+
         setHasMoreResults(hasMore)
-        
+
         if (loadMore) {
           // Append to existing results
           setSearchResults(prev => [...prev, ...displayResults])
@@ -710,18 +643,18 @@ export default function Home() {
           addToSearchHistory(searchQuery, displayResults.length)
           // Track search analytics
           Analytics.searchPerformed(displayResults.length, searchQuery.length)
-          setTimeout(() => setShowLoadingOverlay(false), 300)
+          // setTimeout(() => setShowLoadingOverlay(false), 300)
         }
       } else {
         console.error('❌ Search failed:', result.error)
         setError(result.error || 'Search failed')
-        if (!loadMore) setShowLoadingOverlay(false)
+        // if (!loadMore) setShowLoadingOverlay(false)
       }
     } catch (err) {
       if (progressInterval.current) clearInterval(progressInterval.current)
       setError('Search failed')
       console.error(err)
-      if (!loadMore) setShowLoadingOverlay(false)
+      // if (!loadMore) setShowLoadingOverlay(false)
     } finally {
       setIsSearching(false)
       setIsLoadingMore(false)
@@ -803,7 +736,7 @@ export default function Home() {
   // Extract searchable terms from an advanced query (removes operators, extracts phrases and words)
   const extractSearchTerms = (query: string): string[] => {
     const terms: string[] = []
-    
+
     // Extract exact phrases (quoted strings)
     const phraseMatches = query.match(/"([^"]+)"/g)
     if (phraseMatches) {
@@ -811,46 +744,46 @@ export default function Home() {
         terms.push(match.replace(/"/g, ''))
       })
     }
-    
+
     // Remove quotes and operators, then extract remaining words
     let remaining = query
       .replace(/"[^"]+"/g, '') // Remove quoted phrases
       .replace(/\b(AND|OR|NOT)\b/gi, '') // Remove operators
       .replace(/[+\-*?:]/g, ' ') // Remove special chars
       .trim()
-    
+
     // Add individual words (filter out empty strings)
     remaining.split(/\s+/).forEach(word => {
       if (word && word.length > 1) {
         terms.push(word)
       }
     })
-    
+
     return terms
   }
 
   const highlightText = (text: string, query: string) => {
     if (!query) return text
-    
+
     // Extract actual search terms from the query
     const terms = extractSearchTerms(query)
     if (terms.length === 0) return text
-    
+
     // Create regex pattern that matches any of the terms
     const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
     const parts = text.split(regex)
-    
+
     return parts.map((part, i) =>
       regex.test(part) ? <mark key={i} className="bg-yellow-200 dark:bg-yellow-500/40 px-1 rounded text-black dark:text-white font-medium">{part}</mark> : part
     )
   }
 
   const openFile = async (filePath: string, withSearchTerm?: string) => {
-    try { 
+    try {
       // Show loading spinner
       setIsOpeningFile(true)
-      
+
       // If a search term is provided, use the smart open that navigates to the match
       if (withSearchTerm && withSearchTerm.trim()) {
         await tauriAPI.openFileAndSearch(filePath, withSearchTerm)
@@ -860,9 +793,9 @@ export default function Home() {
       // Track file open - extract file type from extension
       const ext = filePath.split('.').pop()?.toLowerCase() || 'unknown'
       Analytics.fileOpened(ext)
-    } catch (err) { 
+    } catch (err) {
       setError('Failed to open file')
-      console.error(err) 
+      console.error(err)
     } finally {
       // Hide loading spinner after a small delay to ensure app has launched
       setTimeout(() => setIsOpeningFile(false), 500)
@@ -1073,7 +1006,7 @@ export default function Home() {
                                 <span>Searching in folder: <strong>{searchScope.name}</strong></span>
                               </>
                             )}
-                            <button 
+                            <button
                               onClick={clearSearchScope}
                               className="ml-1 hover:bg-primary/20 rounded-full p-0.5"
                               title="Search all files"
@@ -1115,9 +1048,9 @@ export default function Home() {
                         <div className="space-y-2 pt-2 border-t border-border/50">
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-medium text-muted-foreground">Indexed Folders ({indexedFolders.length})</span>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={selectFolder}
                               disabled={isScanning}
                               className="h-7 px-2 text-xs"
@@ -1131,12 +1064,11 @@ export default function Home() {
                               const isExcluded = excludedFolders.includes(folder)
                               return (
                                 <TooltipProvider key={folder}>
-                                  <div 
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${
-                                      isExcluded 
-                                        ? 'bg-muted text-muted-foreground opacity-60' 
-                                        : 'bg-primary/10 text-primary'
-                                    }`}
+                                  <div
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${isExcluded
+                                      ? 'bg-muted text-muted-foreground opacity-60'
+                                      : 'bg-primary/10 text-primary'
+                                      }`}
                                   >
                                     <FolderOpen className="h-3 w-3" />
                                     <span className={`truncate max-w-[200px] ${isExcluded ? 'line-through' : ''}`} title={folder}>
@@ -1146,11 +1078,10 @@ export default function Home() {
                                       <TooltipTrigger asChild>
                                         <button
                                           onClick={() => toggleFolderExclusion(folder)}
-                                          className={`rounded-full p-0.5 transition-colors ${
-                                            isExcluded 
-                                              ? 'hover:bg-primary/20 text-muted-foreground' 
-                                              : 'hover:bg-primary/20'
-                                          }`}
+                                          className={`rounded-full p-0.5 transition-colors ${isExcluded
+                                            ? 'hover:bg-primary/20 text-muted-foreground'
+                                            : 'hover:bg-primary/20'
+                                            }`}
                                           title={isExcluded ? "Include in search" : "Exclude from search"}
                                         >
                                           {isExcluded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
@@ -1226,7 +1157,7 @@ export default function Home() {
                             <> in folder <span className="text-foreground font-semibold">{searchScope.name}</span></>
                           )}
                           {searchDuration !== null && (
-                            <span className="text-muted-foreground/70"> ({(searchDuration / 1000).toFixed(2)} seconds)</span>
+                            <span className="text-muted-foreground/70"> ({searchDuration < 1000 ? `${searchDuration}ms` : `${(searchDuration / 1000).toFixed(2)}s`})</span>
                           )}
                         </h3>
                         <div className="flex gap-2">
@@ -1306,8 +1237,8 @@ export default function Home() {
                             </div>
                             <div className="space-y-2">
                               <label className="text-xs font-medium">File Size</label>
-                              <Select 
-                                value={filterMinSize === 0 && filterMaxSize === 100 ? 'all' : 'custom'} 
+                              <Select
+                                value={filterMinSize === 0 && filterMaxSize === 100 ? 'all' : 'custom'}
                                 onValueChange={(val) => {
                                   if (val === 'all') { setFilterMinSize(0); setFilterMaxSize(100); }
                                   else if (val === 'small') { setFilterMinSize(0); setFilterMaxSize(1); }
@@ -1329,9 +1260,23 @@ export default function Home() {
                       )}
 
                       <div className="grid gap-4">
-                        {filteredResults.map((result, index) => (
-                          <Card 
-                            key={index} 
+                        {(isSearching || (isScanning && !searchQuery)) ? (
+                          <div className="col-span-full">
+                            <SearchLoadingState
+                              isScanning={isScanning}
+                              indexingPhase={indexingPhase}
+                              totalFilesToProcess={totalFilesToProcess}
+                              filesProcessed={filesProcessed}
+                              scanProgress={scanProgress}
+                              loadingProgress={loadingProgress}
+                              loadingMessage={loadingMessage}
+                              currentFileName={currentFileName}
+                              indexingStartTime={indexingStartTime}
+                            />
+                          </div>
+                        ) : filteredResults.map((result, index) => (
+                          <Card
+                            key={index}
                             className="group hover:shadow-xl hover:scale-[1.01] transition-all duration-200 border-border/50 bg-card/50 backdrop-blur-sm cursor-pointer animate-in fade-in slide-in-from-bottom-2"
                             style={{ animationDelay: `${Math.min(index * 50, 300)}ms`, animationFillMode: 'both' }}
                             onClick={() => previewFileContent(result.file)}
@@ -1367,9 +1312,9 @@ export default function Home() {
 
                               {/* Search in this file button */}
                               <div className="mt-3 pt-3 border-t border-border/20 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
                                   className="text-xs text-muted-foreground hover:text-primary"
                                   onClick={() => {
                                     setSearchScope({ type: 'file', path: result.file?.path, name: result.file?.name });
@@ -1387,8 +1332,8 @@ export default function Home() {
                       {/* Load More Button */}
                       {hasMoreResults && (
                         <div className="flex justify-center pt-4">
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant="outline"
                             onClick={() => searchFiles(true)}
                             disabled={isSearching}
                             className="gap-2"
@@ -1480,8 +1425,8 @@ export default function Home() {
                             When enabled, DocuFind will automatically update the search index when files are added, modified, or deleted in your indexed folders.
                           </p>
                         </div>
-                        <Button 
-                          variant={isWatching ? "default" : "outline"} 
+                        <Button
+                          variant={isWatching ? "default" : "outline"}
                           onClick={toggleWatching}
                           disabled={indexedFolders.length === 0}
                           className={`gap-2 transition-all ${isWatching ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
@@ -1516,7 +1461,7 @@ export default function Home() {
                     </CardHeader>
                     <CardContent className="overflow-auto max-h-[500px]">
                       {indexedFolders.length > 0 ? (
-                        <FolderTree 
+                        <FolderTree
                           onExclusionChange={async () => {
                             // Refresh excluded folders list
                             const result = await tauriAPI.getExcludedFolders()
@@ -1750,106 +1695,7 @@ export default function Home() {
         </main>
       </div>
 
-      {/* Loading Overlay */}
-      {showLoadingOverlay && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-lg border-none shadow-2xl bg-card/90 backdrop-blur-xl ring-1 ring-border/50">
-            <CardContent className="pt-10 pb-8 flex flex-col items-center text-center space-y-6">
 
-              {/* Enhanced Animation */}
-              <div className="relative w-28 h-28">
-                {/* Outer rotating ring */}
-                <div className="absolute inset-0 rounded-full border-2 border-primary/20 border-t-primary animate-spin" style={{ animationDuration: '2s' }} />
-                {/* Middle pulsing ring */}
-                <div className="absolute inset-2 rounded-full bg-primary/5 animate-pulse" />
-                {/* Inner content */}
-                <div className="absolute inset-4 flex items-center justify-center">
-                  <div className="relative w-16 h-16 bg-gradient-to-br from-primary/20 to-primary/10 rounded-2xl flex items-center justify-center overflow-hidden shadow-lg">
-                    <FileText className="h-8 w-8 text-primary" />
-                    {/* Scanning line effect */}
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/20 to-transparent animate-scan" />
-                  </div>
-                </div>
-                {/* Floating document icons */}
-                <div className="absolute -top-1 -right-1 w-6 h-6 bg-blue-500/20 rounded-lg flex items-center justify-center animate-float">
-                  <FileText className="h-3 w-3 text-blue-500" />
-                </div>
-                <div className="absolute -bottom-1 -left-1 w-5 h-5 bg-orange-500/20 rounded-lg flex items-center justify-center animate-float-delayed">
-                  <FileText className="h-2.5 w-2.5 text-orange-500" />
-                </div>
-                <div className="absolute top-1/2 -right-3 w-4 h-4 bg-green-500/20 rounded-lg flex items-center justify-center animate-float" style={{ animationDelay: '0.5s' }}>
-                  <FileText className="h-2 w-2 text-green-500" />
-                </div>
-              </div>
-
-              <div className="space-y-2 w-full">
-                <h3 className="text-xl font-bold tracking-tight">
-                  {isScanning ? (
-                    indexingPhase === 'discovering' ? '🔍 Discovering Files' :
-                    indexingPhase === 'finalizing' ? '✨ Finalizing Index' :
-                    '📚 Building Search Index'
-                  ) : '🔎 Searching...'}
-                </h3>
-                {isScanning && (
-                  <p className="text-sm text-muted-foreground">
-                    {indexingPhase === 'discovering' ? 'Scanning folder structure...' :
-                     indexingPhase === 'finalizing' ? 'Almost done! Optimizing for fast search...' :
-                     'Indexing your documents for lightning-fast search'}
-                  </p>
-                )}
-              </div>
-
-              <div className="w-full space-y-3">
-                {/* Progress stats row */}
-                <div className="flex justify-between text-xs text-muted-foreground font-mono px-1">
-                  <span className="flex items-center gap-1">
-                    {isScanning && totalFilesToProcess > 0 && (
-                      <span className="text-primary font-semibold">{filesProcessed.toLocaleString()}/{totalFilesToProcess.toLocaleString()} files</span>
-                    )}
-                    {isScanning && totalFilesToProcess === 0 && indexingPhase === 'discovering' && (
-                      <span className="animate-pulse">Scanning...</span>
-                    )}
-                    {!isScanning && <span>{loadingMessage.split(':')[0]}</span>}
-                  </span>
-                  <span className="font-semibold text-primary">{Math.round(isScanning ? scanProgress : loadingProgress)}%</span>
-                </div>
-                
-                {/* Enhanced Progress bar with gradient */}
-                <div className="relative h-3 w-full bg-muted rounded-full overflow-hidden">
-                  <div 
-                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary via-primary to-primary/80 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${isScanning ? scanProgress : loadingProgress}%` }}
-                  />
-                  {/* Shimmer effect */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
-                </div>
-                
-                {/* Current file being processed */}
-                {isScanning && currentFileName && indexingPhase === 'indexing' && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground/80 px-1 py-1 bg-muted/30 rounded-md">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
-                    <p className="truncate" title={currentFileName}>
-                      {currentFileName}
-                    </p>
-                  </div>
-                )}
-                
-                {/* Elapsed time for long operations */}
-                {isScanning && indexingStartTime && (
-                  <ElapsedTime startTime={indexingStartTime} />
-                )}
-              </div>
-
-              {/* Rotating tips */}
-              {isScanning && (
-                <div className="w-full pt-2 border-t border-border/50">
-                  <RotatingTip />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* Preview Modal */}
       <FilePreviewPane
@@ -1925,7 +1771,7 @@ export default function Home() {
               A new version of DocuFind is ready to install.
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             {updateInfo && (
               <>
@@ -1935,7 +1781,7 @@ export default function Home() {
                     v{updateInfo.version}
                   </Badge>
                 </div>
-                
+
                 {updateInfo.body && (
                   <div className="space-y-2">
                     <span className="text-sm font-medium">What's New:</span>
@@ -1968,14 +1814,14 @@ export default function Home() {
           </div>
 
           <div className="flex gap-2 justify-end">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={dismissUpdate}
               disabled={isUpdating}
             >
               Later
             </Button>
-            <Button 
+            <Button
               onClick={handleUpdate}
               disabled={isUpdating}
               className="gap-2"
@@ -1998,7 +1844,7 @@ export default function Home() {
 
       {/* Update Available Banner (shows after dismissing dialog) */}
       {updateInfo?.available && updateDismissed && !showUpdateDialog && (
-        <div 
+        <div
           className="fixed bottom-4 right-4 z-40 cursor-pointer"
           onClick={() => setShowUpdateDialog(true)}
         >

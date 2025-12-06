@@ -82,14 +82,14 @@ export function FilePreviewPane({
 }: FilePreviewPaneProps) {
     const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
     const [totalMatches, setTotalMatches] = useState(0)
-    const [viewMode, setViewMode] = useState<ViewMode>('rich')
+    const [viewMode, setViewMode] = useState<ViewMode>('text')
     const [selectedFont, setSelectedFont] = useState<string>(DEFAULT_FONT)
     const contentRef = useRef<HTMLDivElement>(null)
     const matchRefs = useRef<(HTMLElement | null)[]>([])
 
     // Detect RTL content using regex
     const isRTL = useMemo(() => detectRTL(content), [content])
-    
+
     // Get the font family for the selected font
     const fontFamily = useMemo(() => {
         const font = FONT_OPTIONS.find(f => f.value === selectedFont)
@@ -98,7 +98,7 @@ export function FilePreviewPane({
 
     // Check if rich view is available (structured content exists with sections)
     const richViewAvailable = structuredContent && structuredContent.sections && structuredContent.sections.length > 0
-    
+
     // If rich view not available, force text mode
     const effectiveViewMode = richViewAvailable ? viewMode : 'text'
 
@@ -113,7 +113,7 @@ export function FilePreviewPane({
     // Helper to extract terms for match counting
     const getSearchRegex = (query: string): RegExp | null => {
         const terms: string[] = []
-        
+
         // Extract exact phrases (quoted strings)
         const phraseMatches = query.match(/"([^"]+)"/g)
         if (phraseMatches) {
@@ -121,22 +121,22 @@ export function FilePreviewPane({
                 terms.push(match.replace(/"/g, ''))
             })
         }
-        
+
         // Remove quotes and operators, then extract remaining words
         let remaining = query
             .replace(/"[^"]+"/g, '')
             .replace(/\b(AND|OR|NOT)\b/gi, '')
             .replace(/[+\-*?:]/g, ' ')
             .trim()
-        
+
         remaining.split(/\s+/).forEach(word => {
             if (word && word.length > 1) {
                 terms.push(word)
             }
         })
-        
+
         if (terms.length === 0) return null
-        
+
         const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         return new RegExp(`(${escapedTerms.join('|')})`, 'gi')
     }
@@ -151,7 +151,7 @@ export function FilePreviewPane({
             setTotalMatches(0)
             return
         }
-        
+
         const matches = content.match(regex)
         const count = matches ? matches.length : 0
         setTotalMatches(count)
@@ -218,7 +218,7 @@ export function FilePreviewPane({
     // Extract searchable terms from an advanced query (removes operators, extracts phrases and words)
     const extractSearchTerms = (query: string): string[] => {
         const terms: string[] = []
-        
+
         // Extract exact phrases (quoted strings)
         const phraseMatches = query.match(/"([^"]+)"/g)
         if (phraseMatches) {
@@ -226,21 +226,21 @@ export function FilePreviewPane({
                 terms.push(match.replace(/"/g, ''))
             })
         }
-        
+
         // Remove quotes and operators, then extract remaining words
         let remaining = query
             .replace(/"[^"]+"/g, '') // Remove quoted phrases
             .replace(/\b(AND|OR|NOT)\b/gi, '') // Remove operators
             .replace(/[+\-*?:]/g, ' ') // Remove special chars
             .trim()
-        
+
         // Add individual words (filter out empty strings)
         remaining.split(/\s+/).forEach(word => {
             if (word && word.length > 1) {
                 terms.push(word)
             }
         })
-        
+
         return terms
     }
 
@@ -251,7 +251,7 @@ export function FilePreviewPane({
         // Extract actual search terms from the query
         const terms = extractSearchTerms(searchQuery)
         if (terms.length === 0) return content
-        
+
         // Create regex pattern that matches any of the terms
         const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
         const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
@@ -408,7 +408,7 @@ export function FilePreviewPane({
                 <div className="flex-1 overflow-hidden bg-muted/30 relative">
                     <ScrollArea className="h-full w-full">
                         <div className="p-6 min-h-full">
-                            <div 
+                            <div
                                 className="bg-card border border-border/50 shadow-sm rounded-xl p-6 md:p-8 min-h-[500px] overflow-x-auto"
                                 style={{ fontFamily }}
                                 dir={isRTL ? 'rtl' : 'ltr'}

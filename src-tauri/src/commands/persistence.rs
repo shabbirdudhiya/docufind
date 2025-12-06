@@ -1,14 +1,14 @@
-use std::fs;
-use std::path::Path;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
-use tauri::{AppHandle, Emitter, State};
-use tantivy::doc;
-use walkdir::WalkDir;
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+use tantivy::doc;
+use tauri::{AppHandle, Emitter, State};
+use walkdir::WalkDir;
 
-use crate::models::{FileData, IndexingProgress};
 use crate::extractors::extract_content;
+use crate::models::{FileData, IndexingProgress};
 use crate::state::AppState;
 
 /// Initialize SQLite database schema
@@ -24,7 +24,7 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS folders (
             path TEXT PRIMARY KEY,
@@ -32,14 +32,14 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS folder_exclusions (
             path TEXT PRIMARY KEY
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS search_history (
             query TEXT PRIMARY KEY,
@@ -48,7 +48,7 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
-    
+
     // Metadata table for app settings/migrations
     conn.execute(
         "CREATE TABLE IF NOT EXISTS metadata (
@@ -57,7 +57,7 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
-    
+
     // FTS5 Full-Text Search virtual table for fast multilingual search
     // tokenize='unicode61' handles Arabic, Chinese, and all Unicode scripts properly
     conn.execute(
@@ -70,18 +70,18 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
-    
+
     // Create indexes for faster queries
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_files_folder ON files(path)",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_files_type ON files(file_type)",
         [],
     )?;
-    
+
     Ok(())
 }
 
@@ -100,24 +100,35 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
             None => return Ok(()), // No data dir yet
         }
     };
-    
+
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    
+
     let db_path = data_dir.join("docufind.db");
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-    
+
     init_database(&conn).map_err(|e| e.to_string())?;
-    
+
+    // Enable WAL mode for concurrency
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
+
     let files = state.index.read().map_err(|e| e.to_string())?;
     let folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
     let excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
-    
-    // Clear and rewrite
-    conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM files_fts", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM folder_exclusions", []).map_err(|e| e.to_string())?;
-    
+
+    // Clear and rewrite (Use transaction for atomicity)
+    conn.execute("BEGIN TRANSACTION", [])
+        .map_err(|e| e.to_string())?;
+
+    conn.execute("DELETE FROM files", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM files_fts", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folders", [])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM folder_exclusions", [])
+        .map_err(|e| e.to_string())?;
+
     // Insert files into both regular table and FTS5 table
     for file in files.iter() {
         conn.execute(
@@ -131,42 +142,43 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
                 file.file_type,
                 file.content
             ],
-        ).map_err(|e| e.to_string())?;
-        
+        )
+        .map_err(|e| e.to_string())?;
+
         // Also insert into FTS5 for fast full-text search
         conn.execute(
             "INSERT INTO files_fts (path, name, content, file_type) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                file.path,
-                file.name,
-                file.content,
-                file.file_type
-            ],
-        ).map_err(|e| e.to_string())?;
+            params![file.path, file.name, file.content, file.file_type],
+        )
+        .map_err(|e| e.to_string())?;
     }
-    
+
     // Insert folders
     for folder in folders.iter() {
         conn.execute(
             "INSERT OR REPLACE INTO folders (path, is_excluded) VALUES (?1, 0)",
             params![folder],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
-    
+
     // Insert exclusions
     for excl in excluded.iter() {
         conn.execute(
             "INSERT OR REPLACE INTO folder_exclusions (path) VALUES (?1)",
             params![excl],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
-    
+
+    conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+
     // Update connection in state
     {
         let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
         *db_guard = Some(Connection::open(&db_path).map_err(|e| e.to_string())?);
     }
-    
+
     Ok(())
 }
 
@@ -177,31 +189,34 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
         let dir_guard = state.data_dir.lock().map_err(|e| e.to_string())?;
         match dir_guard.as_ref() {
             Some(d) => d.clone(),
-            None => return Ok(serde_json::json!({
-                "loaded": false,
-                "message": "Data directory not set"
-            })),
+            None => {
+                return Ok(serde_json::json!({
+                    "loaded": false,
+                    "message": "Data directory not set"
+                }))
+            }
         }
     };
-    
+
     let db_path = data_dir.join("docufind.db");
-    
+
     if !db_path.exists() {
         return Ok(serde_json::json!({
             "loaded": false,
             "message": "No saved index found"
         }));
     }
-    
+
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-    
+
     // Load folders
-    let mut folder_stmt = conn.prepare("SELECT path FROM folders")
+    let mut folder_stmt = conn
+        .prepare("SELECT path FROM folders")
         .map_err(|e| e.to_string())?;
-    let folder_rows = folder_stmt.query_map([], |row| {
-        row.get::<_, String>(0)
-    }).map_err(|e| e.to_string())?;
-    
+    let folder_rows = folder_stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+
     let mut valid_folders: Vec<String> = Vec::new();
     for row in folder_rows {
         let path = row.map_err(|e| e.to_string())?;
@@ -209,56 +224,62 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
             valid_folders.push(path);
         }
     }
-    
+
     // Load exclusions
-    let mut excl_stmt = conn.prepare("SELECT path FROM folder_exclusions")
+    let mut excl_stmt = conn
+        .prepare("SELECT path FROM folder_exclusions")
         .map_err(|e| e.to_string())?;
-    let excl_rows = excl_stmt.query_map([], |row| {
-        row.get::<_, String>(0)
-    }).map_err(|e| e.to_string())?;
-    
+    let excl_rows = excl_stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+
     let mut excluded_folders: Vec<String> = Vec::new();
     for row in excl_rows {
         excluded_folders.push(row.map_err(|e| e.to_string())?);
     }
-    
+
     if valid_folders.is_empty() {
         return Ok(serde_json::json!({
             "loaded": false,
             "message": "No saved folders found"
         }));
     }
-    
+
     // Load files
-    let mut file_stmt = conn.prepare(
-        "SELECT path, name, size, last_modified, file_type, content FROM files"
-    ).map_err(|e| e.to_string())?;
-    
-    let file_rows = file_stmt.query_map([], |row| {
-        Ok(FileData {
-            path: row.get(0)?,
-            name: row.get(1)?,
-            size: row.get(2)?,
-            last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            file_type: row.get(4)?,
-            content: row.get(5)?,
+    let mut file_stmt = conn
+        .prepare("SELECT path, name, size, last_modified, file_type, content FROM files")
+        .map_err(|e| e.to_string())?;
+
+    let file_rows = file_stmt
+        .query_map([], |row| {
+            Ok(FileData {
+                path: row.get(0)?,
+                name: row.get(1)?,
+                size: row.get(2)?,
+                last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                file_type: row.get(4)?,
+                content: row.get(5)?,
+            })
         })
-    }).map_err(|e| e.to_string())?;
-    
+        .map_err(|e| e.to_string())?;
+
     let mut valid_files: Vec<FileData> = Vec::new();
     for row in file_rows {
         let file = row.map_err(|e| e.to_string())?;
-        if valid_folders.iter().any(|folder| file.path.starts_with(folder)) 
-            && Path::new(&file.path).exists() {
+        if valid_folders
+            .iter()
+            .any(|folder| file.path.starts_with(folder))
+            && Path::new(&file.path).exists()
+        {
             valid_files.push(file);
         }
     }
-    
+
     let file_count = valid_files.len();
     let folder_count = valid_folders.len();
-    
+
     // Update state IMMEDIATELY - UI can work with in-memory index
     {
         let mut index = state.index.write().map_err(|e| e.to_string())?;
@@ -272,48 +293,52 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
         let mut excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
         *excluded = excluded_folders.iter().cloned().collect();
     }
-    
+
     // Store connection
     {
         let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-        
+
         // Check if FTS5 table exists, create if not (fast operation)
-        let fts5_exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='files_fts'",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
-        
+        let fts5_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='files_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
         if fts5_exists == 0 {
             conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
                     path, name, content, file_type, tokenize='unicode61'
                 )",
                 [],
-            ).ok();
+            )
+            .ok();
         }
-        
+
         *db_guard = Some(conn);
     }
-    
+
     // Rebuild FTS5 index IN BACKGROUND if needed - don't block UI
     let db_path_for_fts5 = db_path.clone();
     let file_count_for_fts5 = file_count;
     std::thread::spawn(move || {
         if let Ok(conn) = Connection::open(&db_path_for_fts5) {
-            let fts5_data_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM files_fts",
-                [],
-                |row| row.get(0),
-            ).unwrap_or(0);
-            
-            println!("[FTS5] Background: Table has {} rows, need {}", fts5_data_count, file_count_for_fts5);
-            
+            let fts5_data_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM files_fts", [], |row| row.get(0))
+                .unwrap_or(0);
+
+            println!(
+                "[FTS5] Background: Table has {} rows, need {}",
+                fts5_data_count, file_count_for_fts5
+            );
+
             if fts5_data_count == 0 && file_count_for_fts5 > 0 {
                 println!("[FTS5] Background: Rebuilding index...");
                 let start = std::time::Instant::now();
-                
+
                 // Use transaction for faster insert
                 let _ = conn.execute("BEGIN TRANSACTION", []);
                 let _ = conn.execute("DELETE FROM files_fts", []);
@@ -323,21 +348,25 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
                     [],
                 );
                 let _ = conn.execute("COMMIT", []);
-                
+
                 match result {
-                    Ok(count) => println!("[FTS5] Background: Inserted {} rows in {:?}", count, start.elapsed()),
+                    Ok(count) => println!(
+                        "[FTS5] Background: Inserted {} rows in {:?}",
+                        count,
+                        start.elapsed()
+                    ),
                     Err(e) => println!("[FTS5] Background: Error - {}", e),
                 }
             }
         }
     });
-    
+
     // Rebuild Tantivy index IN BACKGROUND - don't block UI
     // Search will still work via direct content search until Tantivy is ready
     let tantivy_writer = state.tantivy_writer.clone();
     let tantivy_schema = state.tantivy_schema.clone();
     let files_for_tantivy = valid_files.clone();
-    
+
     std::thread::spawn(move || {
         if let Ok(mut writer) = tantivy_writer.lock() {
             let path_field = tantivy_schema.get_field("path").unwrap();
@@ -346,9 +375,9 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
             let file_type_field = tantivy_schema.get_field("file_type").unwrap();
             let size_field = tantivy_schema.get_field("size").unwrap();
             let modified_field = tantivy_schema.get_field("modified").unwrap();
-            
+
             let _ = writer.delete_all_documents();
-            
+
             // Add all files silently
             for file in files_for_tantivy.iter() {
                 let _ = writer.add_document(doc!(
@@ -360,14 +389,14 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
                     modified_field => file.last_modified.timestamp()
                 ));
             }
-            
+
             // Commit
             if let Err(_e) = writer.commit() {
                 // Silent failure - search still works via direct search
             }
         }
     });
-    
+
     Ok(serde_json::json!({
         "loaded": true,
         "fileCount": file_count,
@@ -404,12 +433,15 @@ pub async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
     {
         let db_guard = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(conn) = db_guard.as_ref() {
-            conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
-            conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
-            conn.execute("DELETE FROM folder_exclusions", []).map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM files", [])
+                .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM folders", [])
+                .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM folder_exclusions", [])
+                .map_err(|e| e.to_string())?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -422,10 +454,12 @@ fn is_doc_migration_done(state: &State<'_, AppState>) -> bool {
             None => return false,
         }
     };
-    
+
     let db_path = data_dir.join("docufind.db");
     if let Ok(conn) = Connection::open(&db_path) {
-        if let Ok(mut stmt) = conn.prepare("SELECT value FROM metadata WHERE key = 'doc_migration_done'") {
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT value FROM metadata WHERE key = 'doc_migration_done'")
+        {
             if let Ok(mut rows) = stmt.query([]) {
                 if let Ok(Some(_row)) = rows.next() {
                     return true;
@@ -445,16 +479,17 @@ fn mark_doc_migration_done(state: &State<'_, AppState>) -> Result<(), String> {
             None => return Ok(()),
         }
     };
-    
+
     let db_path = data_dir.join("docufind.db");
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
     init_database(&conn).map_err(|e| e.to_string())?;
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('doc_migration_done', '1')",
         [],
-    ).map_err(|e| e.to_string())?;
-    
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -477,13 +512,13 @@ pub async fn scan_for_new_doc_files(
             "message": ".doc migration already completed"
         }));
     }
-    
+
     // Get current indexed folders
     let folders: Vec<String> = {
         let folders_guard = state.watched_folders.lock().map_err(|e| e.to_string())?;
         folders_guard.iter().cloned().collect()
     };
-    
+
     if folders.is_empty() {
         // Mark as done even if no folders - user can add folders later
         let _ = mark_doc_migration_done(&state);
@@ -493,18 +528,20 @@ pub async fn scan_for_new_doc_files(
             "message": "No folders to scan"
         }));
     }
-    
+
     // Get already indexed file paths - check BOTH in-memory index AND database
     let indexed_paths: HashSet<String> = {
         let index = state.index.read().map_err(|e| e.to_string())?;
         let mut paths: HashSet<String> = index.iter().map(|f| f.path.clone()).collect();
-        
+
         // Also check database for any files that were indexed but not loaded yet
         if let Ok(data_dir) = state.data_dir.lock() {
             if let Some(ref data_dir_path) = *data_dir {
                 let db_path = data_dir_path.join("docufind.db");
                 if let Ok(conn) = Connection::open(&db_path) {
-                    if let Ok(mut stmt) = conn.prepare("SELECT path FROM files WHERE file_type = 'word'") {
+                    if let Ok(mut stmt) =
+                        conn.prepare("SELECT path FROM files WHERE file_type = 'word'")
+                    {
                         if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
                             for path in rows.flatten() {
                                 paths.insert(path);
@@ -514,32 +551,35 @@ pub async fn scan_for_new_doc_files(
                 }
             }
         }
-        
+
         paths
     };
-    
-    // Emit that .doc indexing is starting  
-    let _ = app.emit("doc-indexing-started", serde_json::json!({
-        "message": "Scanning for .doc files...",
-        "total": 0
-    }));
-    
+
+    // Emit that .doc indexing is starting
+    let _ = app.emit(
+        "doc-indexing-started",
+        serde_json::json!({
+            "message": "Scanning for .doc files...",
+            "total": 0
+        }),
+    );
+
     // Get data directory for database operations in background task
     let data_dir = {
         let dir_guard = state.data_dir.lock().map_err(|e| e.to_string())?;
         dir_guard.clone()
     };
-    
+
     // Clone state for the background task
     let state_index = state.index.clone();
     let state_tantivy_writer = state.tantivy_writer.clone();
     let state_tantivy_schema = state.tantivy_schema.clone();
-    
+
     // Spawn background task for BOTH scanning and indexing
     std::thread::spawn(move || {
         // Find .doc files that aren't indexed yet (now in background)
         let mut new_doc_files: Vec<std::path::PathBuf> = Vec::new();
-        
+
         for folder in &folders {
             for entry in WalkDir::new(folder)
                 .into_iter()
@@ -547,15 +587,15 @@ pub async fn scan_for_new_doc_files(
                 .filter(|e| e.file_type().is_file())
             {
                 let file_name = entry.file_name().to_string_lossy().to_string();
-                
+
                 // Skip hidden and temp files
                 if file_name.starts_with('.') || file_name.starts_with("~$") {
                     continue;
                 }
-                
+
                 if let Some(ext) = entry.path().extension() {
                     let ext_str = ext.to_str().unwrap_or("").to_lowercase();
-                    
+
                     // Only look for .doc files that aren't already indexed
                     if ext_str == "doc" {
                         let path_str = entry.path().to_string_lossy().to_string();
@@ -566,9 +606,9 @@ pub async fn scan_for_new_doc_files(
                 }
             }
         }
-        
+
         let total_found = new_doc_files.len();
-        
+
         if total_found == 0 {
             // Mark migration done silently
             if let Some(ref data_dir_path) = data_dir {
@@ -589,7 +629,7 @@ pub async fn scan_for_new_doc_files(
             );
             return;
         }
-        
+
         // Emit progress update with total found immediately
         let _ = app.emit(
             "doc-indexing-progress",
@@ -600,27 +640,28 @@ pub async fn scan_for_new_doc_files(
                 phase: "scanning".to_string(),
             },
         );
-        
+
         let mut indexed_count = 0;
         let mut new_files: Vec<FileData> = Vec::new();
-        
+
         for (i, file_path) in new_doc_files.iter().enumerate() {
-            
-            let file_name = file_path.file_name()
+            let file_name = file_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            
+
             if let Ok(metadata) = std::fs::metadata(file_path) {
                 let size = metadata.len();
                 if size == 0 {
                     continue;
                 }
-                
-                let modified: DateTime<Utc> = metadata.modified()
+
+                let modified: DateTime<Utc> = metadata
+                    .modified()
                     .map(|t| t.into())
                     .unwrap_or_else(|_| Utc::now());
                 let path_str = file_path.to_string_lossy().to_string();
-                
+
                 // Extract content
                 if let Some(content) = extract_content(file_path, "doc") {
                     let file_data = FileData {
@@ -631,12 +672,12 @@ pub async fn scan_for_new_doc_files(
                         file_type: "word".to_string(),
                         content,
                     };
-                    
+
                     new_files.push(file_data);
                     indexed_count += 1;
                 }
             }
-            
+
             // Emit progress every 10 files or at the end
             if (i + 1) % 10 == 0 || i + 1 == total_found {
                 if (i + 1) % 100 == 0 {
@@ -660,7 +701,7 @@ pub async fn scan_for_new_doc_files(
                                 }
                             }
                         }
-                        
+
                         // Add to in-memory index
                         if let Ok(mut index) = state_index.write() {
                             index.extend(new_files.drain(..));
@@ -678,24 +719,24 @@ pub async fn scan_for_new_doc_files(
                 );
             }
         }
-        
+
         if !new_files.is_empty() {
             // Add to index
             if let Ok(mut index) = state_index.write() {
                 index.extend(new_files.clone());
             }
-            
+
             // Add to Tantivy
             if let Ok(mut writer) = state_tantivy_writer.lock() {
                 let schema = &state_tantivy_schema;
-                
+
                 let path_field = schema.get_field("path").unwrap();
                 let name_field = schema.get_field("name").unwrap();
                 let content_field = schema.get_field("content").unwrap();
                 let file_type_field = schema.get_field("file_type").unwrap();
                 let size_field = schema.get_field("size").unwrap();
                 let modified_field = schema.get_field("modified").unwrap();
-                
+
                 for file in &new_files {
                     let _ = writer.add_document(doc!(
                         path_field => file.path.clone(),
@@ -706,10 +747,10 @@ pub async fn scan_for_new_doc_files(
                         modified_field => file.last_modified.timestamp()
                     ));
                 }
-                
+
                 let _ = writer.commit();
             }
-            
+
             // Save newly indexed files to database
             if let Some(ref data_dir_path) = data_dir {
                 let db_path = data_dir_path.join("docufind.db");
@@ -728,7 +769,7 @@ pub async fn scan_for_new_doc_files(
                             ],
                         );
                     }
-                    
+
                     // Mark migration done
                     let _ = conn.execute(
                         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('doc_migration_done', '1')",
@@ -748,7 +789,7 @@ pub async fn scan_for_new_doc_files(
                 }
             }
         }
-        
+
         // Emit completion
         let _ = app.emit(
             "doc-indexing-complete",
@@ -758,7 +799,7 @@ pub async fn scan_for_new_doc_files(
             }),
         );
     });
-    
+
     // Return immediately - scanning and indexing happens in background
     Ok(serde_json::json!({
         "found": 0,
