@@ -18,7 +18,7 @@ interface SearchLoadingStateProps {
     indexingStartTime: Date | null;
 }
 
-export function SearchLoadingState({
+export function SearchLoader({
     isScanning,
     indexingPhase,
     totalFilesToProcess,

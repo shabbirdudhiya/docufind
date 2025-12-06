@@ -57,7 +57,7 @@ import { FolderTree } from '@/components/FolderTree'
 import { tauriAPI, DocumentContent } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
 import { initAnalytics, Analytics } from '@/lib/firebase'
-import { SearchLoadingState } from '@/components/SearchLoadingState'
+import { SearchLoader } from '@/components/SearchLoader'
 
 interface FileData {
   path: string
@@ -597,6 +597,7 @@ export default function Home() {
     }
 
     const startTime = performance.now()
+    const MIN_SEARCH_ANIMATION_MS = 600 // Minimum time to show the skeleton animation
 
     try {
       // Build search options based on scope
@@ -616,8 +617,8 @@ export default function Home() {
       )
 
       const endTime = performance.now()
-      const duration = endTime - startTime
-      if (!loadMore) setSearchDuration(duration)
+      const totalTime = endTime - startTime
+      if (!loadMore) setSearchDuration(totalTime)
 
       console.log('🎯 Search result:', result)
       if (progressInterval.current) clearInterval(progressInterval.current)
@@ -635,7 +636,7 @@ export default function Home() {
           setSearchResults(prev => [...prev, ...displayResults])
           setCurrentOffset(offset + displayResults.length)
         } else {
-          console.log(`✅ Found ${displayResults.length}${hasMore ? '+' : ''} results in ${duration.toFixed(0)}ms`, displayResults)
+          console.log(`✅ Found ${displayResults.length}${hasMore ? '+' : ''} results in ${totalTime.toFixed(0)}ms`, displayResults)
           setLoadingMessage(`Found ${displayResults.length}${hasMore ? '+' : ''} results!`)
           setSearchResults(displayResults)
           setTotalResultsFound(displayResults.length)
@@ -1109,40 +1110,7 @@ export default function Home() {
                   </Card>
 
                   {/* Results Area */}
-                  {isSearching ? (
-                    <div className="space-y-4 animate-in fade-in duration-300">
-                      <div className="flex items-center justify-between px-1">
-                        <div className="flex items-center gap-2">
-                          <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                          <span className="text-sm text-muted-foreground">Searching documents...</span>
-                        </div>
-                        <Skeleton className="h-8 w-24" />
-                      </div>
-                      <div className="grid gap-4">
-                        {[1, 2, 3, 4].map((i) => (
-                          <Card key={i} className="border-border/50 bg-card/50 backdrop-blur-sm animate-pulse" style={{ animationDelay: `${i * 100}ms` }}>
-                            <CardContent className="p-5">
-                              <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                  <Skeleton className="h-12 w-12 rounded-xl" />
-                                  <div className="space-y-2">
-                                    <Skeleton className="h-5 w-56" />
-                                    <Skeleton className="h-3 w-40" />
-                                  </div>
-                                </div>
-                                <Skeleton className="h-6 w-16 rounded-full" />
-                              </div>
-                              <div className="space-y-2 mt-4">
-                                <Skeleton className="h-4 w-full" />
-                                <Skeleton className="h-4 w-5/6" />
-                                <Skeleton className="h-4 w-2/3" />
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  ) : filteredResults.length > 0 ? (
+                  {filteredResults.length > 0 ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
                       <div className="flex items-center justify-between px-1">
                         <h3 className="text-sm text-muted-foreground">
@@ -1262,7 +1230,7 @@ export default function Home() {
                       <div className="grid gap-4">
                         {(isSearching || (isScanning && !searchQuery)) ? (
                           <div className="col-span-full">
-                            <SearchLoadingState
+                            <SearchLoader
                               isScanning={isScanning}
                               indexingPhase={indexingPhase}
                               totalFilesToProcess={totalFilesToProcess}
