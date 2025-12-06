@@ -58,6 +58,19 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
     
+    // FTS5 Full-Text Search virtual table for fast multilingual search
+    // tokenize='unicode61' handles Arabic, Chinese, and all Unicode scripts properly
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+            path,
+            name, 
+            content,
+            file_type,
+            tokenize='unicode61'
+        )",
+        [],
+    )?;
+    
     // Create indexes for faster queries
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_files_folder ON files(path)",
@@ -101,10 +114,11 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
     
     // Clear and rewrite
     conn.execute("DELETE FROM files", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM files_fts", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM folders", []).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM folder_exclusions", []).map_err(|e| e.to_string())?;
     
-    // Insert files
+    // Insert files into both regular table and FTS5 table
     for file in files.iter() {
         conn.execute(
             "INSERT OR REPLACE INTO files (path, name, size, last_modified, file_type, content) 
@@ -116,6 +130,17 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
                 file.last_modified.to_rfc3339(),
                 file.file_type,
                 file.content
+            ],
+        ).map_err(|e| e.to_string())?;
+        
+        // Also insert into FTS5 for fast full-text search
+        conn.execute(
+            "INSERT INTO files_fts (path, name, content, file_type) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                file.path,
+                file.name,
+                file.content,
+                file.file_type
             ],
         ).map_err(|e| e.to_string())?;
     }
@@ -251,8 +276,61 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
     // Store connection
     {
         let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
-        *db_guard = Some(Connection::open(&db_path).map_err(|e| e.to_string())?);
+        let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        
+        // Check if FTS5 table exists, create if not (fast operation)
+        let fts5_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='files_fts'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        
+        if fts5_exists == 0 {
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+                    path, name, content, file_type, tokenize='unicode61'
+                )",
+                [],
+            ).ok();
+        }
+        
+        *db_guard = Some(conn);
     }
+    
+    // Rebuild FTS5 index IN BACKGROUND if needed - don't block UI
+    let db_path_for_fts5 = db_path.clone();
+    let file_count_for_fts5 = file_count;
+    std::thread::spawn(move || {
+        if let Ok(conn) = Connection::open(&db_path_for_fts5) {
+            let fts5_data_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files_fts",
+                [],
+                |row| row.get(0),
+            ).unwrap_or(0);
+            
+            println!("[FTS5] Background: Table has {} rows, need {}", fts5_data_count, file_count_for_fts5);
+            
+            if fts5_data_count == 0 && file_count_for_fts5 > 0 {
+                println!("[FTS5] Background: Rebuilding index...");
+                let start = std::time::Instant::now();
+                
+                // Use transaction for faster insert
+                let _ = conn.execute("BEGIN TRANSACTION", []);
+                let _ = conn.execute("DELETE FROM files_fts", []);
+                let result = conn.execute(
+                    "INSERT INTO files_fts (path, name, content, file_type) 
+                     SELECT path, name, content, file_type FROM files",
+                    [],
+                );
+                let _ = conn.execute("COMMIT", []);
+                
+                match result {
+                    Ok(count) => println!("[FTS5] Background: Inserted {} rows in {:?}", count, start.elapsed()),
+                    Err(e) => println!("[FTS5] Background: Error - {}", e),
+                }
+            }
+        }
+    });
     
     // Rebuild Tantivy index IN BACKGROUND - don't block UI
     // Search will still work via direct content search until Tantivy is ready
@@ -261,8 +339,6 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
     let files_for_tantivy = valid_files.clone();
     
     std::thread::spawn(move || {
-        let start = std::time::Instant::now();
-        
         if let Ok(mut writer) = tantivy_writer.lock() {
             let path_field = tantivy_schema.get_field("path").unwrap();
             let name_field = tantivy_schema.get_field("name").unwrap();

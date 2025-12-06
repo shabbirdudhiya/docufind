@@ -1,29 +1,31 @@
 //! Search functionality
 //! 
 //! This module provides search capabilities:
-//! - Tantivy full-text search (English/Latin text)
-//! - Direct content search (Arabic, Chinese, other scripts)
+//! - SQLite FTS5 full-text search (ALL languages including Arabic, Chinese)
+//! - Tantivy full-text search (English/Latin text - legacy)
+//! - Direct content search (fallback)
 //! - Query parsing with AND/OR/NOT operators
 //! - Search history management
 //! - Search filters (date, type, size)
 //!
-//! PERFORMANCE OPTIMIZATIONS:
-//! - Early termination once enough results found
-//! - Single lowercase conversion per file
-//! - Fast ASCII path for context extraction
-//! - Parallel processing with rayon
+//! ARCHITECTURE:
+//! - FTS5: Primary search engine for all languages (instant)
+//! - Tantivy: Fast indexed search for ASCII (legacy support)
+//! - Direct: Fallback when FTS5 not available
 
 pub mod tantivy_search;
 mod direct_search;
 mod query_parser;
 mod history;
 mod filters;
+pub mod fts5_search;
 
 pub use tantivy_search::{create_tantivy_index, search_with_tantivy, TantivyComponents, add_document_to_tantivy, delete_document_from_tantivy};
 pub use direct_search::search_direct_content;
 pub use query_parser::{parse_simple_query, matches_parsed_query, ParsedQuery};
 pub use history::{SearchHistory, MAX_HISTORY_ENTRIES};
 pub use filters::apply_filters;
+pub use fts5_search::{search_fts5, has_fts5_data, rebuild_fts5_index};
 
 use crate::models::Match;
 
