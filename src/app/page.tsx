@@ -43,7 +43,9 @@ import {
   Download,
   User,
   Github,
-  Plus
+  Plus,
+  MoreHorizontal,
+  Loader2
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -195,6 +197,17 @@ export default function Home() {
   const [filterDateRange, setFilterDateRange] = useState<string>('all')
   const [filterMinSize, setFilterMinSize] = useState<number>(0)
   const [filterMaxSize, setFilterMaxSize] = useState<number>(100)
+
+  // Search Scope (new - for searching specific file/folder)
+  const [searchScope, setSearchScope] = useState<{
+    type: 'all' | 'folder' | 'file';
+    path?: string;
+    name?: string;
+  }>({ type: 'all' })
+  const [hasMoreResults, setHasMoreResults] = useState(false)
+  const [currentOffset, setCurrentOffset] = useState(0)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [totalResultsFound, setTotalResultsFound] = useState(0)
 
   // History & Preview
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
@@ -621,56 +634,116 @@ export default function Home() {
     setStats(stats)
   }
 
-  const searchFiles = async () => {
+  const searchFiles = async (loadMore = false) => {
     if (!searchQuery.trim() || files.length === 0) return
 
-    console.log(`🔎 Searching for "${searchQuery}" in ${files.length} files`)
-    setIsSearching(true)
-    setSearchDuration(null)
-    setShowLoadingOverlay(true)
-    setLoadingProgress(0)
-    setLoadingMessage('Searching through documents...')
+    const offset = loadMore ? currentOffset : 0
+    const maxResults = 100
 
-    // Simulate progress animation
-    let progress = 0
-    progressInterval.current = setInterval(() => {
-      progress += Math.random() * 15
-      if (progress > 90) progress = 90
-      setLoadingProgress(progress)
-    }, 200)
+    console.log(`🔎 Searching for "${searchQuery}" ${loadMore ? '(loading more)' : ''} in ${files.length} files`)
+    
+    if (loadMore) {
+      setIsLoadingMore(true)
+    } else {
+      setIsSearching(true)
+      setSearchDuration(null)
+      setShowLoadingOverlay(true)
+      setLoadingProgress(0)
+      setLoadingMessage('Searching through documents...')
+      setCurrentOffset(0)
+    }
+
+    // Simulate progress animation (only for initial search)
+    if (!loadMore) {
+      let progress = 0
+      progressInterval.current = setInterval(() => {
+        progress += Math.random() * 15
+        if (progress > 90) progress = 90
+        setLoadingProgress(progress)
+      }, 200)
+    }
 
     const startTime = performance.now()
     
     try {
-      const result = await tauriAPI.searchFiles(searchQuery, selectedFolder)
+      // Build search options based on scope
+      const searchOptions: { filePath?: string; maxResults?: number; offset?: number } = {
+        maxResults: maxResults + 1, // Get one extra to check if there are more
+        offset,
+      }
+      
+      if (searchScope.type === 'file' && searchScope.path) {
+        searchOptions.filePath = searchScope.path
+      }
+      
+      const result = await tauriAPI.searchFiles(
+        searchQuery, 
+        searchScope.type === 'folder' ? searchScope.path || null : selectedFolder,
+        searchOptions
+      )
+      
       const endTime = performance.now()
       const duration = endTime - startTime
-      setSearchDuration(duration)
+      if (!loadMore) setSearchDuration(duration)
       
       console.log('🎯 Search result:', result)
       if (progressInterval.current) clearInterval(progressInterval.current)
-      setLoadingProgress(100)
+      if (!loadMore) setLoadingProgress(100)
+      
       if (result.success && result.results) {
-        console.log(`✅ Found ${result.results.length} results in ${duration.toFixed(0)}ms`, result.results)
-        setLoadingMessage(`Found ${result.results.length} results!`)
-        setSearchResults(result.results)
-        addToSearchHistory(searchQuery, result.results.length)
-        // Track search analytics
-        Analytics.searchPerformed(result.results.length, searchQuery.length)
-        setTimeout(() => setShowLoadingOverlay(false), 300)
+        // Check if there are more results
+        const hasMore = result.results.length > maxResults
+        const displayResults = hasMore ? result.results.slice(0, maxResults) : result.results
+        
+        setHasMoreResults(hasMore)
+        
+        if (loadMore) {
+          // Append to existing results
+          setSearchResults(prev => [...prev, ...displayResults])
+          setCurrentOffset(offset + displayResults.length)
+        } else {
+          console.log(`✅ Found ${displayResults.length}${hasMore ? '+' : ''} results in ${duration.toFixed(0)}ms`, displayResults)
+          setLoadingMessage(`Found ${displayResults.length}${hasMore ? '+' : ''} results!`)
+          setSearchResults(displayResults)
+          setTotalResultsFound(displayResults.length)
+          setCurrentOffset(displayResults.length)
+          addToSearchHistory(searchQuery, displayResults.length)
+          // Track search analytics
+          Analytics.searchPerformed(displayResults.length, searchQuery.length)
+          setTimeout(() => setShowLoadingOverlay(false), 300)
+        }
       } else {
         console.error('❌ Search failed:', result.error)
         setError(result.error || 'Search failed')
-        setShowLoadingOverlay(false)
+        if (!loadMore) setShowLoadingOverlay(false)
       }
     } catch (err) {
       if (progressInterval.current) clearInterval(progressInterval.current)
       setError('Search failed')
       console.error(err)
-      setShowLoadingOverlay(false)
+      if (!loadMore) setShowLoadingOverlay(false)
     } finally {
       setIsSearching(false)
+      setIsLoadingMore(false)
     }
+  }
+
+  // Helper to search within a specific file
+  const searchInFile = (file: FileData) => {
+    setSearchScope({ type: 'file', path: file.path, name: file.name })
+    searchInputRef.current?.focus()
+  }
+
+  // Helper to search within a specific folder
+  const searchInFolder = (folderPath: string) => {
+    const folderName = folderPath.split(/[/\\]/).pop() || folderPath
+    setSearchScope({ type: 'folder', path: folderPath, name: folderName })
+    searchInputRef.current?.focus()
+  }
+
+  // Reset search scope
+  const clearSearchScope = () => {
+    setSearchScope({ type: 'all' })
   }
 
   const toggleWatching = async () => {
@@ -980,10 +1053,39 @@ export default function Home() {
                             </Popover>
                           </div>
                         </div>
-                        <Button onClick={searchFiles} disabled={!searchQuery.trim() || files.length === 0} className="h-12 w-12 p-0 rounded-xl transition-all hover:scale-105">
+                        <Button onClick={() => searchFiles()} disabled={!searchQuery.trim() || files.length === 0} className="h-12 w-12 p-0 rounded-xl transition-all hover:scale-105">
                           {isSearching ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
                         </Button>
                       </div>
+
+                      {/* Search Scope Indicator - Shows when searching in specific file/folder */}
+                      {searchScope.type !== 'all' && (
+                        <div className="flex items-center gap-2 px-1 animate-in slide-in-from-top-2 duration-200">
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs bg-primary/10 text-primary border border-primary/20">
+                            {searchScope.type === 'file' ? (
+                              <>
+                                <FileText className="h-3 w-3" />
+                                <span>Searching in: <strong>{searchScope.name}</strong></span>
+                              </>
+                            ) : (
+                              <>
+                                <FolderOpen className="h-3 w-3" />
+                                <span>Searching in folder: <strong>{searchScope.name}</strong></span>
+                              </>
+                            )}
+                            <button 
+                              onClick={clearSearchScope}
+                              className="ml-1 hover:bg-primary/20 rounded-full p-0.5"
+                              title="Search all files"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            Press Enter to search, or <button onClick={clearSearchScope} className="underline hover:text-foreground">search all files</button>
+                          </span>
+                        </div>
+                      )}
 
                       {/* Loading saved index indicator */}
                       {isLoadingIndex && (
@@ -1113,8 +1215,16 @@ export default function Home() {
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
                       <div className="flex items-center justify-between px-1">
                         <h3 className="text-sm text-muted-foreground">
-                          Found <span className="text-foreground font-semibold">{filteredResults.length}</span> results in{' '}
-                          <span className="text-foreground font-semibold">{stats.totalFiles.toLocaleString()}</span> documents
+                          Found <span className="text-foreground font-semibold">{filteredResults.length}{hasMoreResults ? '+' : ''}</span> results
+                          {searchScope.type === 'all' && (
+                            <> in <span className="text-foreground font-semibold">{stats.totalFiles.toLocaleString()}</span> documents</>
+                          )}
+                          {searchScope.type === 'file' && (
+                            <> in <span className="text-foreground font-semibold">{searchScope.name}</span></>
+                          )}
+                          {searchScope.type === 'folder' && (
+                            <> in folder <span className="text-foreground font-semibold">{searchScope.name}</span></>
+                          )}
                           {searchDuration !== null && (
                             <span className="text-muted-foreground/70"> ({(searchDuration / 1000).toFixed(2)} seconds)</span>
                           )}
@@ -1254,10 +1364,49 @@ export default function Home() {
                                   </p>
                                 ))}
                               </div>
+
+                              {/* Search in this file button */}
+                              <div className="mt-3 pt-3 border-t border-border/20 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="text-xs text-muted-foreground hover:text-primary"
+                                  onClick={() => {
+                                    setSearchScope({ type: 'file', path: result.file?.path, name: result.file?.name });
+                                  }}
+                                >
+                                  <Search className="h-3 w-3 mr-1" />
+                                  Search in this file
+                                </Button>
+                              </div>
                             </CardContent>
                           </Card>
                         ))}
                       </div>
+
+                      {/* Load More Button */}
+                      {hasMoreResults && (
+                        <div className="flex justify-center pt-4">
+                          <Button 
+                            variant="outline" 
+                            onClick={() => searchFiles(true)}
+                            disabled={isSearching}
+                            className="gap-2"
+                          >
+                            {isSearching ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Loading...
+                              </>
+                            ) : (
+                              <>
+                                <MoreHorizontal className="h-4 w-4" />
+                                Load More Results
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     !isSearching && !isLoadingIndex && (

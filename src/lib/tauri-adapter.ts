@@ -521,7 +521,24 @@ export const tauriAPI = {
     }
   },
 
-  searchFiles: async (query: string, folderPath: string | null) => {
+  /**
+   * Search files with optional filters for pagination and scope
+   * @param query - Search query string
+   * @param options - Optional search options
+   * @param options.filePath - Search only in this specific file
+   * @param options.folderPath - Search only in this folder
+   * @param options.maxResults - Maximum results to return (default 100)
+   * @param options.offset - Skip first N results (for "Load More")
+   */
+  searchFiles: async (
+    query: string,
+    folderPath: string | null,
+    options?: {
+      filePath?: string;
+      maxResults?: number;
+      offset?: number;
+    }
+  ) => {
     if (typeof window === "undefined") {
       return { success: false, error: "Not available during SSR" };
     }
@@ -535,8 +552,19 @@ export const tauriAPI = {
         score: number;
       }
 
+      // Build filters object for Rust
+      const filters = options
+        ? {
+            file_path: options.filePath || null,
+            folder_path: folderPath || null,
+            max_results: options.maxResults || null,
+            offset: options.offset || null,
+          }
+        : null;
+
       const results = await invoke<RustSearchResult[]>("search_index", {
         query,
+        filters,
       });
 
       const mappedResults: SearchResult[] = results.map((r) => ({

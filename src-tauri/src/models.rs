@@ -71,6 +71,9 @@ pub struct SearchFilters {
     pub min_size: Option<u64>,
     pub max_size: Option<u64>,
     pub folder_path: Option<String>,          // Limit search to specific folder
+    pub file_path: Option<String>,            // Search in a single specific file
+    pub max_results: Option<usize>,           // Limit number of results (default 100)
+    pub offset: Option<usize>,                // Skip first N results (for pagination)
 }
 
 /// Index statistics for dashboard
