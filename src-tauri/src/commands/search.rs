@@ -1,25 +1,21 @@
 use rusqlite::{Connection, OpenFlags};
-use rustc_hash::FxHashSet;
 use std::collections::HashSet;
 use tauri::State;
 
 use crate::models::{FileData, SearchFilters, SearchHistoryEntry, SearchResult};
-use crate::search::{apply_filters, search_direct_content, search_fts5, search_with_tantivy};
+use crate::search::{apply_filters, search_direct_content, search_fts5};
 use crate::state::AppState;
 
-/// Minimum results from Tantivy before skipping direct search (for ASCII queries)
-const MIN_TANTIVY_RESULTS: usize = 5;
 /// Default max results if not specified
 const DEFAULT_MAX_RESULTS: usize = 100;
 
 /// Search the index with optional filters
 ///
-/// SEARCH STRATEGY (Priority Order):
-/// 1. SQLite FTS5 (preferred) - Instant search for ALL languages including Arabic
-/// 2. Tantivy (fallback for ASCII) - Fast indexed search for English
-/// 3. Direct search (last resort) - Linear scan if no index available
+/// SEARCH STRATEGY:
+/// 1. SQLite FTS5 (primary) - Instant search for ALL languages including Arabic
+/// 2. Direct content search (fallback) - Linear scan if FTS5 unavailable
 ///
-/// FTS5 is now the primary search engine because:
+/// FTS5 is the primary search engine because:
 /// - Works with Arabic, Chinese, Hebrew, and all Unicode
 /// - Uses inverted index (O(log n) vs O(n))
 /// - Already stored in SQLite database
@@ -29,9 +25,13 @@ pub async fn search_index(
     filters: Option<SearchFilters>,
     state: State<'_, AppState>,
 ) -> Result<Vec<SearchResult>, String> {
+    let total_start = std::time::Instant::now();
+
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
+
+    println!("[Search] Query: '{}'", query);
 
     // Extract pagination/scope options from filters
     let max_results = filters
@@ -91,49 +91,15 @@ pub async fn search_index(
     }
 
     if !used_fts5 {
-        println!("[Search] Fallback: FTS5 unavailable or failed. Using fallback engines.");
-        let has_non_ascii = query.chars().any(|c| !c.is_ascii());
-        if file_path_filter.is_some() {
-            // Single-file search mode
-            println!("[Search] Strategy: Direct Search (Single File)");
-            let files = state.index.read().map_err(|e| e.to_string())?;
-            results = search_direct_content(&query, &files, Some(1000), file_path_filter)?;
-        } else if has_non_ascii {
-            // Non-ASCII: Direct search
-            println!("[Search] Strategy: Direct Search (Non-ASCII)");
-            let files = state.index.read().map_err(|e| e.to_string())?;
-            results = search_direct_content(&query, &files, Some(max_results + offset), None)?;
-        } else {
-            // ASCII: Tantivy first
-            println!("[Search] Strategy: Tantivy (English/ASCII)");
-            results = search_with_tantivy(
-                &query,
-                &state.tantivy_index,
-                &state.tantivy_reader,
-                &state.tantivy_schema,
-            )?;
+        // FTS5 is our primary search engine. If it fails, fall back to direct search.
+        // This should rarely happen in normal operation.
+        println!("[Search] Fallback: FTS5 unavailable, using direct content search.");
 
-            println!("[Search] Tantivy found {} results", results.len());
+        let files = state.index.read().map_err(|e| e.to_string())?;
+        results =
+            search_direct_content(&query, &files, Some(max_results + offset), file_path_filter)?;
 
-            if results.len() < MIN_TANTIVY_RESULTS {
-                println!("[Search] Minimal Tantivy results, supplementing with Direct Search");
-                let files = state.index.read().map_err(|e| e.to_string())?;
-                let direct_results =
-                    search_direct_content(&query, &files, Some(max_results), None)?;
-
-                if !direct_results.is_empty() {
-                    let existing_paths: FxHashSet<String> =
-                        results.iter().map(|r| r.file.path.clone()).collect();
-                    for dr in direct_results {
-                        if !existing_paths.contains(&dr.file.path) {
-                            results.push(dr);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Filter excluded folders (FTS5 already does this)
+        // Filter excluded folders
         if file_path_filter.is_none() && !excluded_folders.is_empty() {
             results.retain(|r| {
                 !excluded_folders
@@ -159,6 +125,22 @@ pub async fn search_index(
         if let Ok(mut history) = state.search_history.lock() {
             history.add(query.clone(), results.len());
         }
+    }
+
+    // Log final stats
+    let total_time = total_start.elapsed();
+    if used_fts5 {
+        println!(
+            "[Search] ✅ FTS5 succeeded: {} results in {:?}",
+            results.len(),
+            total_time
+        );
+    } else {
+        println!(
+            "[Search] ⚠️ Used fallback engine: {} results in {:?}",
+            results.len(),
+            total_time
+        );
     }
 
     Ok(results)

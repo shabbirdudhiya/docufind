@@ -15,7 +15,7 @@ use crate::models::{
 pub fn extract_docx(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;
-    let mut content = String::new();
+    let mut content = String::with_capacity(8192);
 
     if let Ok(mut document) = archive.by_name("word/document.xml") {
         let mut xml = String::new();
@@ -356,17 +356,6 @@ fn parse_document_xml(
                             if in_text {
                                 current_text.push('\n');
                             } else if in_run {
-                                // Close current run, start new run with newline, or just append to text buffer if we allow it
-                                // For simplicity, we assume we might be in a run's text context or not.
-                                // But <w:br> usually appears inside <w:r> alongside <w:t>.
-                                // It seems we are not "in_text" (<w:t>) when <w:br> appears, but we are "in_run".
-                                // We need to append to the NEXT text run or create a run just for this?
-                                // Easiest: append to a buffer?
-                                // Issue: TextRun struct splits by style.
-                                // If we assume <w:br/> is just text content "\n", we can treat it as such.
-                                // But we need a place to store it.
-                                // Let's modify the flow to allow appending specific chars to `current_runs` directly?
-                                // Or better: we treat it as starting a new text segment essentially.
                                 current_runs.push(TextRun {
                                     text: "\n".to_string(),
                                     style: current_style.clone(),

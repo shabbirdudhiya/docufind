@@ -1,70 +1,50 @@
 //! Application state management
-//! 
+//!
 //! Central state for the application including:
 //! - File index (in-memory)
-//! - Tantivy search index
+//! - SQLite FTS5 search index
 //! - Folder tracking
 //! - Search history
 
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex, RwLock};
-use std::path::PathBuf;
 use rusqlite::Connection;
-use tantivy::{Index, IndexReader, IndexWriter};
-use tantivy::schema::Schema;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::models::FileData;
-use crate::search::{create_tantivy_index, SearchHistory};
+use crate::search::SearchHistory;
 
 /// Main application state
 pub struct AppState {
     /// In-memory file index
     pub index: Arc<RwLock<Vec<FileData>>>,
-    
+
     /// Folders being watched/indexed
     pub watched_folders: Mutex<HashSet<String>>,
-    
+
     /// Folders excluded from search results
     pub excluded_folders: Mutex<HashSet<String>>,
-    
+
     /// File system watcher
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
-    
-    /// Tantivy full-text search index
-    pub tantivy_index: Index,
-    
-    /// Tantivy index reader
-    pub tantivy_reader: IndexReader,
-    
-    /// Tantivy index writer (mutex for thread safety) - Arc for sharing across threads
-    pub tantivy_writer: Arc<Mutex<IndexWriter>>,
-    
-    /// Tantivy schema
-    pub tantivy_schema: Schema,
-    
-    /// SQLite database connection for persistence
+
+    /// SQLite database connection for persistence and FTS5 search
     pub db: Mutex<Option<Connection>>,
-    
+
     /// App data directory path
     pub data_dir: Mutex<Option<PathBuf>>,
-    
+
     /// Search history
     pub search_history: Mutex<SearchHistory>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        let tantivy = create_tantivy_index();
-        
         Self {
             index: Arc::new(RwLock::new(Vec::new())),
             watched_folders: Mutex::new(HashSet::new()),
             excluded_folders: Mutex::new(HashSet::new()),
             watcher: Mutex::new(None),
-            tantivy_index: tantivy.index,
-            tantivy_reader: tantivy.reader,
-            tantivy_writer: Arc::new(Mutex::new(tantivy.writer)),
-            tantivy_schema: tantivy.schema,
             db: Mutex::new(None),
             data_dir: Mutex::new(None),
             search_history: Mutex::new(SearchHistory::new()),
@@ -77,14 +57,14 @@ impl AppState {
     pub fn get_data_dir(&self) -> Option<PathBuf> {
         self.data_dir.lock().ok()?.clone()
     }
-    
+
     /// Set data directory path
     pub fn set_data_dir(&self, path: PathBuf) -> Result<(), String> {
         let mut dir = self.data_dir.lock().map_err(|e| e.to_string())?;
         *dir = Some(path);
         Ok(())
     }
-    
+
     /// Check if a path is in an excluded folder
     pub fn is_path_excluded(&self, path: &str) -> bool {
         if let Ok(excluded) = self.excluded_folders.lock() {
@@ -92,7 +72,7 @@ impl AppState {
         }
         false
     }
-    
+
     /// Get count of files in a specific folder
     pub fn get_folder_file_count(&self, folder_path: &str) -> usize {
         if let Ok(index) = self.index.read() {

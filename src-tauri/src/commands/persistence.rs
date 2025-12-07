@@ -3,7 +3,6 @@ use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use tantivy::doc;
 use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
@@ -59,14 +58,15 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
 
     // FTS5 Full-Text Search virtual table for fast multilingual search
-    // tokenize='unicode61' handles Arabic, Chinese, and all Unicode scripts properly
+    // - unicode61: Proper Unicode tokenization for Arabic/Chinese/Hebrew
+    // - remove_diacritics 1: Normalize Arabic diacritics for better matching
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
             path,
             name, 
             content,
             file_type,
-            tokenize='unicode61'
+            tokenize='unicode61 remove_diacritics 1'
         )",
         [],
     )?;
@@ -82,7 +82,37 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
+    // Set initial schema version for new databases
+    conn.execute(
+        "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '1')",
+        [],
+    )?;
+
     Ok(())
+}
+
+/// Check FTS5 index health and return status
+/// Returns (is_healthy, file_count, fts5_count)
+pub fn check_fts5_health(conn: &Connection) -> Result<(bool, i64, i64), String> {
+    // Get file count from main table
+    let file_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // Get FTS5 count
+    let fts5_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM files_fts", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // Check if counts match (healthy state)
+    let is_healthy = file_count == fts5_count;
+
+    println!(
+        "[FTS5] Health check: files={}, fts5={}, healthy={}",
+        file_count, fts5_count, is_healthy
+    );
+
+    Ok((is_healthy, file_count, fts5_count))
 }
 
 /// Save index to SQLite database
@@ -173,6 +203,12 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
 
     conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
 
+    // Set schema version to current version
+    super::migrations::set_schema_version(&conn, super::migrations::CURRENT_SCHEMA_VERSION)?;
+
+    let file_count = files.len();
+    println!("[Save] Saved {} files to SQLite + FTS5", file_count);
+
     // Update connection in state
     {
         let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
@@ -206,6 +242,40 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
             "message": "No saved index found"
         }));
     }
+
+    // Check database version - if old version, delete and force re-index
+    // This is simpler than complex migrations for 20 users
+    {
+        let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        let schema_version = super::migrations::get_schema_version(&conn);
+
+        if schema_version < super::migrations::CURRENT_SCHEMA_VERSION {
+            println!(
+                "[Load] Old database version detected (v{}), deleting for clean upgrade...",
+                schema_version
+            );
+            drop(conn); // Close connection before deleting
+
+            // Delete old database
+            std::fs::remove_file(&db_path).map_err(|e| e.to_string())?;
+
+            // Also delete backup if exists
+            let backup_path = db_path.with_extension("db.backup");
+            if backup_path.exists() {
+                let _ = std::fs::remove_file(&backup_path);
+            }
+
+            println!("[Load] Old database deleted. User will need to re-add folders.");
+            return Ok(serde_json::json!({
+                "loaded": false,
+                "upgraded": true,
+                "message": "Search engine upgraded! Please re-add your folders for faster search."
+            }));
+        }
+    }
+
+    let load_start = std::time::Instant::now();
+    println!("[Load] Starting index load from {:?}", db_path);
 
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
@@ -294,115 +364,54 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
         *excluded = excluded_folders.iter().cloned().collect();
     }
 
-    // Store connection
+    // Store connection (database is already v2+ since we deleted old ones above)
     {
         let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-        // Check if FTS5 table exists, create if not (fast operation)
-        let fts5_exists: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='files_fts'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        if fts5_exists == 0 {
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-                    path, name, content, file_type, tokenize='unicode61'
-                )",
-                [],
-            )
-            .ok();
-        }
-
         *db_guard = Some(conn);
     }
 
-    // Rebuild FTS5 index IN BACKGROUND if needed - don't block UI
-    let db_path_for_fts5 = db_path.clone();
-    let file_count_for_fts5 = file_count;
-    std::thread::spawn(move || {
-        if let Ok(conn) = Connection::open(&db_path_for_fts5) {
-            let fts5_data_count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM files_fts", [], |row| row.get(0))
-                .unwrap_or(0);
+    // Quick FTS5 health check - should always pass for v2+ databases
+    {
+        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(ref conn) = *db_guard {
+            let (healthy, _db_count, fts_count) = check_fts5_health(conn)?;
 
-            println!(
-                "[FTS5] Background: Table has {} rows, need {}",
-                fts5_data_count, file_count_for_fts5
-            );
-
-            if fts5_data_count == 0 && file_count_for_fts5 > 0 {
-                println!("[FTS5] Background: Rebuilding index...");
+            if healthy {
+                println!(
+                    "[FTS5] Index healthy, loaded {} entries instantly",
+                    fts_count
+                );
+            } else if file_count > 0 {
+                // This should rarely happen in v2+ databases, but handle it gracefully
+                println!("[FTS5] Index mismatch detected, rebuilding...");
                 let start = std::time::Instant::now();
-
-                // Use transaction for faster insert
-                let _ = conn.execute("BEGIN TRANSACTION", []);
-                let _ = conn.execute("DELETE FROM files_fts", []);
-                let result = conn.execute(
+                conn.execute("DELETE FROM files_fts", [])
+                    .map_err(|e| e.to_string())?;
+                conn.execute(
                     "INSERT INTO files_fts (path, name, content, file_type) 
                      SELECT path, name, content, file_type FROM files",
                     [],
-                );
-                let _ = conn.execute("COMMIT", []);
-
-                match result {
-                    Ok(count) => println!(
-                        "[FTS5] Background: Inserted {} rows in {:?}",
-                        count,
-                        start.elapsed()
-                    ),
-                    Err(e) => println!("[FTS5] Background: Error - {}", e),
-                }
+                )
+                .map_err(|e| e.to_string())?;
+                println!("[FTS5] Rebuilt index in {:?}", start.elapsed());
             }
         }
-    });
+    }
 
-    // Rebuild Tantivy index IN BACKGROUND - don't block UI
-    // Search will still work via direct content search until Tantivy is ready
-    let tantivy_writer = state.tantivy_writer.clone();
-    let tantivy_schema = state.tantivy_schema.clone();
-    let files_for_tantivy = valid_files.clone();
-
-    std::thread::spawn(move || {
-        if let Ok(mut writer) = tantivy_writer.lock() {
-            let path_field = tantivy_schema.get_field("path").unwrap();
-            let name_field = tantivy_schema.get_field("name").unwrap();
-            let content_field = tantivy_schema.get_field("content").unwrap();
-            let file_type_field = tantivy_schema.get_field("file_type").unwrap();
-            let size_field = tantivy_schema.get_field("size").unwrap();
-            let modified_field = tantivy_schema.get_field("modified").unwrap();
-
-            let _ = writer.delete_all_documents();
-
-            // Add all files silently
-            for file in files_for_tantivy.iter() {
-                let _ = writer.add_document(doc!(
-                    path_field => file.path.clone(),
-                    name_field => file.name.clone(),
-                    content_field => file.content.clone(),
-                    file_type_field => file.file_type.clone(),
-                    size_field => file.size,
-                    modified_field => file.last_modified.timestamp()
-                ));
-            }
-
-            // Commit
-            if let Err(_e) = writer.commit() {
-                // Silent failure - search still works via direct search
-            }
-        }
-    });
+    let load_duration = load_start.elapsed();
+    println!(
+        "[Load] ✅ Total load time: {:?} ({} files)",
+        load_duration, file_count
+    );
 
     Ok(serde_json::json!({
         "loaded": true,
         "fileCount": file_count,
         "folderCount": folder_count,
         "folders": valid_folders,
-        "excludedFolders": excluded_folders
+        "excludedFolders": excluded_folders,
+        "loadTimeMs": load_duration.as_millis()
     }))
 }
 
@@ -425,15 +434,13 @@ pub async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
         let mut watcher = state.watcher.lock().map_err(|e| e.to_string())?;
         *watcher = None;
     }
-    {
-        let mut writer = state.tantivy_writer.lock().map_err(|e| e.to_string())?;
-        writer.delete_all_documents().map_err(|e| e.to_string())?;
-        writer.commit().map_err(|e| e.to_string())?;
-    }
+    // Note: FTS5 index is cleared when files table is deleted below
     {
         let db_guard = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(conn) = db_guard.as_ref() {
             conn.execute("DELETE FROM files", [])
+                .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM files_fts", [])
                 .map_err(|e| e.to_string())?;
             conn.execute("DELETE FROM folders", [])
                 .map_err(|e| e.to_string())?;
@@ -572,8 +579,7 @@ pub async fn scan_for_new_doc_files(
 
     // Clone state for the background task
     let state_index = state.index.clone();
-    let state_tantivy_writer = state.tantivy_writer.clone();
-    let state_tantivy_schema = state.tantivy_schema.clone();
+    // Note: Tantivy removed - using FTS5 only
 
     // Spawn background task for BOTH scanning and indexing
     std::thread::spawn(move || {
@@ -726,30 +732,8 @@ pub async fn scan_for_new_doc_files(
                 index.extend(new_files.clone());
             }
 
-            // Add to Tantivy
-            if let Ok(mut writer) = state_tantivy_writer.lock() {
-                let schema = &state_tantivy_schema;
-
-                let path_field = schema.get_field("path").unwrap();
-                let name_field = schema.get_field("name").unwrap();
-                let content_field = schema.get_field("content").unwrap();
-                let file_type_field = schema.get_field("file_type").unwrap();
-                let size_field = schema.get_field("size").unwrap();
-                let modified_field = schema.get_field("modified").unwrap();
-
-                for file in &new_files {
-                    let _ = writer.add_document(doc!(
-                        path_field => file.path.clone(),
-                        name_field => file.name.clone(),
-                        content_field => file.content.clone(),
-                        file_type_field => file.file_type.clone(),
-                        size_field => file.size,
-                        modified_field => file.last_modified.timestamp()
-                    ));
-                }
-
-                let _ = writer.commit();
-            }
+            // Note: Tantivy add removed - FTS5 is updated via save_index_internal
+            // The files will be added to FTS5 when saved to database below
 
             // Save newly indexed files to database
             if let Some(ref data_dir_path) = data_dir {

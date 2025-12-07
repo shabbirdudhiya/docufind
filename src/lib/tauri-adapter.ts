@@ -412,11 +412,13 @@ export const tauriAPI = {
   loadIndex: async (): Promise<{
     success: boolean;
     loaded?: boolean;
+    upgraded?: boolean;
     message?: string;
     fileCount?: number;
     folderCount?: number;
     folders?: string[];
     excludedFolders?: string[];
+    loadTimeMs?: number;
     error?: string;
   }> => {
     if (typeof window === "undefined") {

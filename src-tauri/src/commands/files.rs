@@ -3,7 +3,6 @@ use tauri::State;
 
 use crate::extractors::{extract_content, extract_content_structured};
 use crate::models::DocumentContent;
-use crate::search::tantivy_search::delete_document_from_tantivy;
 use crate::state::AppState;
 
 /// Extract file content for preview (plain text)
@@ -45,12 +44,8 @@ pub async fn delete_file(file_path: String, state: State<'_, AppState>) -> Resul
         index.retain(|f| f.path != file_path);
     }
 
-    // Remove from Tantivy index
-    {
-        let mut writer = state.tantivy_writer.lock().map_err(|e| e.to_string())?;
-        delete_document_from_tantivy(&mut writer, &state.tantivy_schema, &file_path)?;
-        writer.commit().map_err(|e| e.to_string())?;
-    }
+    // Note: FTS5 index is automatically updated when save_index is called
+    // The file will be removed from FTS5 on next save
 
     Ok(())
 }
@@ -163,7 +158,13 @@ try {{
     );
 
     std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .spawn()
         .map_err(|e| format!("Failed to launch Word: {}", e))?;
 
@@ -199,7 +200,13 @@ try {{
     );
 
     std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .spawn()
         .map_err(|e| format!("Failed to launch Excel: {}", e))?;
 
@@ -240,7 +247,13 @@ try {{
     );
 
     std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .spawn()
         .map_err(|e| format!("Failed to launch PowerPoint: {}", e))?;
 

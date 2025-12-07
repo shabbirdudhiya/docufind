@@ -7,7 +7,6 @@ use walkdir::WalkDir;
 
 use crate::extractors::{extract_content, get_file_type, is_supported_extension};
 use crate::models::{FileData, FolderInfo, IndexingProgress};
-use crate::search::tantivy_search::add_document_to_tantivy;
 use crate::state::AppState;
 
 /// Scan a folder and index all supported documents (DOCX, PPTX, XLSX, TXT, MD)
@@ -85,9 +84,23 @@ pub async fn scan_folder(
                 return None;
             }
 
+            // Skip very large files (>50MB) to prevent hangs
+            // They will still appear in results but with empty content
+            const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+
             let modified: DateTime<Utc> = metadata.modified().ok()?.into();
             let path_str = file_path.to_string_lossy().to_string();
-            let content = extract_content(file_path, &ext).unwrap_or_default();
+
+            let content = if size <= MAX_FILE_SIZE {
+                extract_content(file_path, &ext).unwrap_or_default()
+            } else {
+                println!(
+                    "[Skip] File too large ({} MB): {}",
+                    size / 1024 / 1024,
+                    file_name
+                );
+                String::new()
+            };
 
             // Update progress
             let current = progress_counter.fetch_add(1, Ordering::SeqCst) + 1;
@@ -142,19 +155,10 @@ pub async fn scan_folder(
         index.extend(new_files.clone());
     }
 
-    // Index into Tantivy
-    {
-        let mut writer = state.tantivy_writer.lock().map_err(|e| e.to_string())?;
-        let schema = &state.tantivy_schema;
+    // Note: Tantivy indexing removed - we use FTS5 only now for faster performance
+    // FTS5 is updated via save_index_internal which writes to both files and files_fts tables
 
-        for file in &new_files {
-            add_document_to_tantivy(&mut writer, schema, file)?;
-        }
-
-        writer.commit().map_err(|e| e.to_string())?;
-    }
-
-    // Auto-save
+    // Auto-save to SQLite (includes FTS5)
     let _ = crate::commands::persistence::save_index_internal(&state);
 
     Ok(new_files)
@@ -206,7 +210,10 @@ pub async fn get_indexed_folders(state: State<'_, AppState>) -> Result<Vec<Folde
             } else {
                 format!("{}{}", folder_path, std::path::MAIN_SEPARATOR)
             };
-            let file_count = index.iter().filter(|f| f.path.starts_with(&path_prefix)).count();
+            let file_count = index
+                .iter()
+                .filter(|f| f.path.starts_with(&path_prefix))
+                .count();
             FolderInfo {
                 path: folder_path.clone(),
                 file_count,
@@ -216,5 +223,3 @@ pub async fn get_indexed_folders(state: State<'_, AppState>) -> Result<Vec<Folde
 
     Ok(results)
 }
-
-

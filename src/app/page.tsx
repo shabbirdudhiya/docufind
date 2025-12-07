@@ -58,6 +58,7 @@ import { tauriAPI, DocumentContent } from '@/lib/tauri-adapter'
 import { checkForUpdates, downloadAndInstallUpdate, UpdateInfo, UpdateProgress } from '@/lib/updater'
 import { initAnalytics, Analytics } from '@/lib/firebase'
 import { SearchLoader } from '@/components/SearchLoader'
+import { ElapsedTime } from '@/components/ElapsedTime'
 
 interface FileData {
   path: string
@@ -857,6 +858,116 @@ export default function Home() {
 
   return (
     <SidebarProvider>
+      {/* Full Screen Scanning Overlay - Modern 2025 Design */}
+      {showLoadingOverlay && (
+        <div className="fixed inset-0 z-[100] bg-background flex items-center justify-center">
+          {/* Animated background particles */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl animate-pulse" />
+            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+            <div className="absolute top-1/2 right-1/3 w-64 h-64 bg-primary/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '0.5s' }} />
+          </div>
+
+          <Card className="w-full max-w-xl mx-4 glass-card border-primary/20 shadow-2xl shadow-primary/10 relative overflow-hidden">
+            {/* Shimmer effect */}
+            <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+
+            <CardContent className="pt-10 pb-10 relative z-10">
+              <div className="flex flex-col items-center gap-6">
+
+                {/* Animated icon with pulsing rings */}
+                <div className="relative">
+                  <div className="absolute inset-0 w-24 h-24 -m-4 rounded-full border-2 border-primary/20 animate-ping" />
+                  <div className="absolute inset-0 w-20 h-20 -m-2 rounded-full border border-primary/30 animate-pulse" />
+                  <div className="h-16 w-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Database className="h-6 w-6 text-primary" />
+                  </div>
+                </div>
+
+                {/* Phase indicator */}
+                <div className="flex items-center gap-3">
+                  {['discovering', 'indexing', 'finalizing'].map((phase, i) => (
+                    <div key={phase} className="flex items-center gap-1.5">
+                      <div className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${indexingPhase === phase
+                        ? 'bg-primary scale-125 shadow-lg shadow-primary/50'
+                        : i < ['discovering', 'indexing', 'finalizing'].indexOf(indexingPhase)
+                          ? 'bg-primary/60'
+                          : 'bg-primary/20'
+                        }`} />
+                      <span className={`text-sm capitalize transition-colors ${indexingPhase === phase ? 'text-primary font-semibold' : 'text-muted-foreground'
+                        }`}>{phase}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Title and message */}
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                    {indexingPhase === 'discovering' && 'Discovering Files'}
+                    {indexingPhase === 'indexing' && 'Indexing Documents'}
+                    {indexingPhase === 'finalizing' && 'Building Search Index'}
+                    {!indexingPhase && 'Processing...'}
+                  </h3>
+                  <p className="text-sm text-muted-foreground max-w-md">{loadingMessage}</p>
+                </div>
+
+                {/* Modern Progress Bar */}
+                <div className="w-full space-y-3">
+                  <div className="h-4 bg-primary/10 rounded-full overflow-hidden relative">
+                    <div
+                      className="absolute inset-y-0 left-0 bg-primary/20 blur-sm transition-all duration-500"
+                      style={{ width: `${scanProgress}%` }}
+                    />
+                    <div
+                      className="h-full bg-gradient-to-r from-primary via-primary/80 to-primary relative transition-all duration-300 ease-out rounded-full"
+                      style={{ width: `${scanProgress}%` }}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+                    </div>
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="flex justify-between items-center text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-lg text-primary font-bold">{filesProcessed.toLocaleString()}</span>
+                      <span className="text-muted-foreground/60">/</span>
+                      <span className="font-mono text-lg text-muted-foreground">{totalFilesToProcess.toLocaleString()}</span>
+                      <span className="text-muted-foreground">files</span>
+                    </div>
+                    <span className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                      {scanProgress}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Current file */}
+                {currentFileName && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-primary/5 rounded-lg border border-primary/10 w-full">
+                    <FileType className="h-4 w-4 text-primary/60 shrink-0" />
+                    <p className="text-sm text-muted-foreground truncate">{currentFileName}</p>
+                  </div>
+                )}
+
+                {/* Elapsed time */}
+                {indexingStartTime && (
+                  <ElapsedTime startTime={indexingStartTime} />
+                )}
+
+                {/* One-time setup message */}
+                <div className="mt-2 px-4 py-3 bg-muted/50 rounded-lg border border-border/50 w-full text-center">
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium">✨ One-time setup</span> — Building your search index for instant results.
+                    <br />
+                    <span className="text-muted-foreground/70">Future searches will be lightning fast!</span>
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <div className="flex min-h-screen w-full bg-background text-foreground">
         <AppSidebar
           activeTab={activeTab}
