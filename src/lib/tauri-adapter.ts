@@ -251,7 +251,7 @@ export const tauriAPI = {
   },
 
   // Scan single folder
-  scanFolder: async (folderPath: string) => {
+  scanFolder: async (folderPath: string, forceReindex: boolean = false) => {
     if (typeof window === "undefined") {
       return { success: false, error: "Not available during SSR" };
     }
@@ -265,6 +265,7 @@ export const tauriAPI = {
 
       const files = await invoke<RustFileData[]>("scan_folder", {
         path: folderPath,
+        force_reindex: forceReindex,
       });
 
       const mappedFiles: FileData[] = files.map((f) => ({

@@ -57,17 +57,67 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
-    // FTS5 Full-Text Search virtual table for fast multilingual search
-    // - unicode61: Proper Unicode tokenization for Arabic/Chinese/Hebrew
-    // - remove_diacritics 1: Normalize Arabic diacritics for better matching
+    // FTS5 Full-Text Search virtual table (Contentless - External Content)
+    // Refers to 'files' table to avoid duplicating content storage
+    // tokenize='unicode61 remove_diacritics 1' for multilingual support
+
+    // Check if FTS5 table exists and is contentless. If not, we drop and recreate.
+    // This handles migration from old schema (duplicated content) to new (contentless).
+    let fts_rebuild_needed = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'files_fts'",
+            [],
+            |row| {
+                let sql: String = row.get(0)?;
+                Ok(!sql.contains("content='files'"))
+            },
+        )
+        .unwrap_or(false); // If table doesn't exist, it's false (or effectively strictly needed creation)
+
+    if fts_rebuild_needed {
+        let _ = conn.execute("DROP TABLE IF EXISTS files_fts", []);
+        let _ = conn.execute("DROP TRIGGER IF EXISTS files_ai", []);
+        let _ = conn.execute("DROP TRIGGER IF EXISTS files_ad", []);
+        let _ = conn.execute("DROP TRIGGER IF EXISTS files_au", []);
+    }
+
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
             path,
             name, 
             content,
             file_type,
+            content='files',
+            content_rowid='rowid',
             tokenize='unicode61 remove_diacritics 1'
         )",
+        [],
+    )?;
+
+    // Triggers to keep FTS5 in sync with main 'files' table automatically
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
+            INSERT INTO files_fts(rowid, path, name, content, file_type) 
+            VALUES (new.rowid, new.path, new.name, new.content, new.file_type);
+        END;",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
+            INSERT INTO files_fts(files_fts, rowid, path, name, content, file_type) 
+            VALUES('delete', old.rowid, old.path, old.name, old.content, old.file_type);
+        END;",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON files BEGIN
+            INSERT INTO files_fts(files_fts, rowid, path, name, content, file_type)
+            VALUES('delete', old.rowid, old.path, old.name, old.content, old.file_type);
+            INSERT INTO files_fts(rowid, path, name, content, file_type)
+            VALUES (new.rowid, new.path, new.name, new.content, new.file_type);
+        END;",
         [],
     )?;
 
@@ -134,7 +184,7 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
     let db_path = data_dir.join("docufind.db");
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    let mut conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
     init_database(&conn).map_err(|e| e.to_string())?;
 
@@ -146,68 +196,76 @@ pub fn save_index_internal(state: &State<'_, AppState>) -> Result<(), String> {
     let folders = state.watched_folders.lock().map_err(|e| e.to_string())?;
     let excluded = state.excluded_folders.lock().map_err(|e| e.to_string())?;
 
-    // Clear and rewrite (Use transaction for atomicity)
-    conn.execute("BEGIN TRANSACTION", [])
+    // Replace basic transaction with batched transaction for performance
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // We can clear tables, triggers will handle FTS cleanup automatically via 'files_ad' trigger
+    // BUT for mass deletion it's faster to disable triggers or just clear both manually if we are doing a full rebuild.
+    // However, simplest logic is:
+    tx.execute("DELETE FROM files", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM folders", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM folder_exclusions", [])
         .map_err(|e| e.to_string())?;
 
-    conn.execute("DELETE FROM files", [])
-        .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM files_fts", [])
-        .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM folders", [])
-        .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM folder_exclusions", [])
-        .map_err(|e| e.to_string())?;
+    // Note: 'files_fts' is automatically updated by the DELETE on 'files' via triggers
 
-    // Insert files into both regular table and FTS5 table
-    for file in files.iter() {
-        conn.execute(
-            "INSERT OR REPLACE INTO files (path, name, size, last_modified, file_type, content) 
+    // Batch inserts for files
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO files (path, name, size, last_modified, file_type, content) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
+            )
+            .map_err(|e| e.to_string())?;
+
+        for file in files.iter() {
+            stmt.execute(params![
                 file.path,
                 file.name,
                 file.size,
                 file.last_modified.to_rfc3339(),
                 file.file_type,
                 file.content
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Also insert into FTS5 for fast full-text search
-        conn.execute(
-            "INSERT INTO files_fts (path, name, content, file_type) VALUES (?1, ?2, ?3, ?4)",
-            params![file.path, file.name, file.content, file.file_type],
-        )
-        .map_err(|e| e.to_string())?;
+            ])
+            .map_err(|e| e.to_string())?;
+        }
     }
+    // FTS5 insertions happen AUTOMATICALLY via triggers! No double-write needed.
 
     // Insert folders
-    for folder in folders.iter() {
-        conn.execute(
-            "INSERT OR REPLACE INTO folders (path, is_excluded) VALUES (?1, 0)",
-            params![folder],
-        )
-        .map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("INSERT OR REPLACE INTO folders (path, is_excluded) VALUES (?1, 0)")
+            .map_err(|e| e.to_string())?;
+
+        for folder in folders.iter() {
+            stmt.execute(params![folder]).map_err(|e| e.to_string())?;
+        }
     }
 
     // Insert exclusions
-    for excl in excluded.iter() {
-        conn.execute(
-            "INSERT OR REPLACE INTO folder_exclusions (path) VALUES (?1)",
-            params![excl],
-        )
-        .map_err(|e| e.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare("INSERT OR REPLACE INTO folder_exclusions (path) VALUES (?1)")
+            .map_err(|e| e.to_string())?;
+
+        for excl in excluded.iter() {
+            stmt.execute(params![excl]).map_err(|e| e.to_string())?;
+        }
     }
 
-    conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
 
     // Set schema version to current version
     super::migrations::set_schema_version(&conn, super::migrations::CURRENT_SCHEMA_VERSION)?;
 
     let file_count = files.len();
-    println!("[Save] Saved {} files to SQLite + FTS5", file_count);
+    println!(
+        "[Save] Saved {} files to SQLite (FTS5 attached)",
+        file_count
+    );
 
     // Update connection in state
     {
@@ -386,14 +444,8 @@ pub async fn load_index(state: State<'_, AppState>) -> Result<serde_json::Value,
                 // This should rarely happen in v2+ databases, but handle it gracefully
                 println!("[FTS5] Index mismatch detected, rebuilding...");
                 let start = std::time::Instant::now();
-                conn.execute("DELETE FROM files_fts", [])
+                conn.execute("INSERT INTO files_fts(files_fts) VALUES('rebuild')", [])
                     .map_err(|e| e.to_string())?;
-                conn.execute(
-                    "INSERT INTO files_fts (path, name, content, file_type) 
-                     SELECT path, name, content, file_type FROM files",
-                    [],
-                )
-                .map_err(|e| e.to_string())?;
                 println!("[FTS5] Rebuilt index in {:?}", start.elapsed());
             }
         }
@@ -438,14 +490,17 @@ pub async fn clear_index(state: State<'_, AppState>) -> Result<(), String> {
     {
         let db_guard = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(conn) = db_guard.as_ref() {
+            // Use immediate checks
             conn.execute("DELETE FROM files", [])
-                .map_err(|e| e.to_string())?;
-            conn.execute("DELETE FROM files_fts", [])
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to delete files: {}", e))?;
             conn.execute("DELETE FROM folders", [])
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to delete folders: {}", e))?;
             conn.execute("DELETE FROM folder_exclusions", [])
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to delete exclusions: {}", e))?;
+
+            // Vacuum to reclaim space and enforce disk sync
+            conn.execute("VACUUM", [])
+                .map_err(|e| format!("Failed to vacuum: {}", e))?;
         }
     }
 
