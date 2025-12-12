@@ -428,22 +428,36 @@ export default function Home() {
     setPreviewStructuredContent(null)
 
     try {
-      // Fetch both plain text and structured content in parallel
-      const [textResult, structuredResult] = await Promise.all([
+      // Fetch both plain text and structured content in parallel, ensuring one failure doesn't block the other
+      const [textResult, structuredResult] = await Promise.allSettled([
         tauriAPI.extractContent(file.path),
         tauriAPI.extractContentStructured(file.path)
       ])
 
-      // Set plain text content (fallback)
-      if (textResult.success) {
-        setPreviewContent(textResult.content || 'No content available')
+      // Handle plain text content
+      if (textResult.status === 'fulfilled' && textResult.value.success) {
+        setPreviewContent(textResult.value.content || 'No content available')
+      } else if (textResult.status === 'fulfilled') {
+        // Backend returned success=false
+        setPreviewContent('Failed to load text: ' + (textResult.value.error || 'Unknown error'))
       } else {
-        setPreviewContent('Failed to load preview: ' + (textResult.error || 'Unknown error'))
+        // Promise rejected (IPC error)
+        console.error('Text extraction failed:', textResult.reason)
+        setPreviewContent('Error loading content')
       }
 
-      // Set structured content if available
-      if (structuredResult.success && structuredResult.content) {
-        setPreviewStructuredContent(structuredResult.content)
+      // Handle structured content
+      if (
+        structuredResult.status === 'fulfilled' &&
+        structuredResult.value.success &&
+        structuredResult.value.content
+      ) {
+        setPreviewStructuredContent(structuredResult.value.content)
+      } else {
+        // Log error but don't show to user since we have text fallback
+        if (structuredResult.status === 'rejected') {
+          console.warn('Structured extraction unavailable:', structuredResult.reason)
+        }
       }
     } catch (err) {
       setPreviewContent('Failed to load preview')

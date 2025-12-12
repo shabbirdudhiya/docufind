@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { 
-  DocumentContent, 
-  ContentSection, 
-  TextRun, 
-  SectionType 
+import type {
+  DocumentContent,
+  ContentSection,
+  TextRun,
+  SectionType
 } from '@/lib/tauri-adapter';
 
 interface StructuredContentRendererProps {
@@ -18,7 +18,7 @@ interface StructuredContentRendererProps {
 // Helper to extract search terms from query
 const extractSearchTerms = (query: string): string[] => {
   const terms: string[] = [];
-  
+
   // Extract exact phrases (quoted strings)
   const phraseMatches = query.match(/"([^"]+)"/g);
   if (phraseMatches) {
@@ -26,20 +26,20 @@ const extractSearchTerms = (query: string): string[] => {
       terms.push(match.replace(/"/g, ''));
     });
   }
-  
+
   // Remove quotes and operators, then extract remaining words
   let remaining = query
     .replace(/"[^"]+"/g, '')
     .replace(/\b(AND|OR|NOT)\b/gi, '')
     .replace(/[+\-*?:]/g, ' ')
     .trim();
-  
+
   remaining.split(/\s+/).forEach(word => {
     if (word && word.length > 1) {
       terms.push(word);
     }
   });
-  
+
   return terms;
 };
 
@@ -66,9 +66,9 @@ const HighlightedText: React.FC<HighlightedTextProps> = ({
   if (!searchRegex) {
     return <span style={style} className={className}>{text}</span>;
   }
-  
+
   const parts = text.split(searchRegex);
-  
+
   return (
     <span style={style} className={className}>
       {parts.map((part, i) => {
@@ -114,7 +114,7 @@ const TextRunRenderer: React.FC<TextRunRendererProps> = ({
 }) => {
   const style: React.CSSProperties = {};
   let className = '';
-  
+
   if (run.style.bold) {
     className += 'font-bold ';
   }
@@ -133,7 +133,7 @@ const TextRunRenderer: React.FC<TextRunRendererProps> = ({
   if (run.style.highlight) {
     style.backgroundColor = run.style.highlight;
   }
-  
+
   return (
     <HighlightedText
       text={run.text}
@@ -166,7 +166,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
   depth = 0
 }) => {
   const sectionType = section.section_type;
-  
+
   const renderRuns = () => {
     if (section.runs && section.runs.length > 0) {
       return section.runs.map((run, i) => (
@@ -193,7 +193,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
     }
     return null;
   };
-  
+
   const renderChildren = () => {
     if (!section.children) return null;
     return section.children.map((child, i) => (
@@ -208,7 +208,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
       />
     ));
   };
-  
+
   // Helper function to render heading with proper level
   const renderHeading = (level: number, children: React.ReactNode) => {
     const sizeClasses: Record<number, string> = {
@@ -220,7 +220,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
       6: 'text-sm font-semibold mt-3 mb-1'
     };
     const className = cn("text-foreground", sizeClasses[level] || sizeClasses[6]);
-    
+
     switch (level) {
       case 1: return <h1 className={className}>{children}</h1>;
       case 2: return <h2 className={className}>{children}</h2>;
@@ -230,20 +230,20 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
       default: return <h6 className={className}>{children}</h6>;
     }
   };
-  
+
   // Render based on section type
   switch (sectionType.type) {
     case 'Heading': {
       return renderHeading(sectionType.level, renderRuns());
     }
-    
+
     case 'Paragraph':
       return (
         <p className="text-foreground/90 leading-7 mb-4">
           {renderRuns()}
         </p>
       );
-    
+
     case 'ListItem': {
       const { ordered, depth: listDepth } = sectionType;
       const indent = `pl-${Math.min(listDepth * 4 + 4, 16)}`;
@@ -253,32 +253,34 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
         </li>
       );
     }
-    
+
     case 'Table':
       return (
-        <div className="my-4 overflow-x-auto">
-          <table className="min-w-full border-collapse border border-border/50">
-            <tbody>
-              {renderChildren()}
-            </tbody>
-          </table>
+        <div className="my-6 overflow-hidden rounded-xl border border-border/40 shadow-sm bg-card/30 backdrop-blur-sm">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-border/40">
+              <tbody className="divide-y divide-border/40">
+                {renderChildren()}
+              </tbody>
+            </table>
+          </div>
         </div>
       );
-    
+
     case 'TableRow':
       return (
-        <tr className="border-b border-border/50">
+        <tr className="hover:bg-muted/40 transition-colors group">
           {renderChildren()}
         </tr>
       );
-    
+
     case 'TableCell':
       return (
-        <td className="px-4 py-2 border-r border-border/50 last:border-r-0 text-sm">
+        <td className="px-6 py-4 text-sm align-top leading-relaxed group-first:font-semibold group-first:bg-muted/20">
           {renderRuns()}
         </td>
       );
-    
+
     case 'PageBreak':
       return (
         <div className="my-8 flex items-center justify-center gap-4">
@@ -287,7 +289,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
           <div className="flex-1 h-px bg-border/50" />
         </div>
       );
-    
+
     case 'SlideBreak':
       return (
         <div className="my-8 p-4 bg-primary/5 border border-primary/20 rounded-lg">
@@ -296,34 +298,34 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
           </div>
         </div>
       );
-    
+
     case 'HorizontalRule':
       return <hr className="my-6 border-border/50" />;
-    
+
     case 'CodeBlock':
       return (
         <pre className="my-4 p-4 bg-muted rounded-lg overflow-x-auto font-mono text-sm">
           {renderRuns()}
         </pre>
       );
-    
+
     case 'Link':
       return (
-        <a 
-          href={sectionType.url} 
-          target="_blank" 
+        <a
+          href={sectionType.url}
+          target="_blank"
           rel="noopener noreferrer"
           className="text-primary hover:underline"
         >
           {renderRuns()}
         </a>
       );
-    
+
     case 'Image':
       if (section.properties?.image_data) {
         return (
           <figure className="my-4">
-            <img 
+            <img
               src={section.properties.image_data}
               alt={section.properties.alt_text || 'Image'}
               className="max-w-full h-auto rounded"
@@ -345,7 +347,7 @@ const SectionRenderer: React.FC<SectionRendererProps> = ({
           [Image]
         </div>
       );
-    
+
     default:
       // Fallback for unknown types
       return (
@@ -366,28 +368,28 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
   const matchRefs = useRef<(HTMLElement | null)[]>([]);
   const matchCountRef = useRef(0);
   const [searchRegex, setSearchRegex] = useState<RegExp | null>(null);
-  
+
   // Build search regex when query changes
   useEffect(() => {
     if (!searchQuery) {
       setSearchRegex(null);
       return;
     }
-    
+
     const terms = extractSearchTerms(searchQuery);
     if (terms.length === 0) {
       setSearchRegex(null);
       return;
     }
-    
+
     const escapedTerms = terms.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     setSearchRegex(new RegExp(`(${escapedTerms.join('|')})`, 'gi'));
   }, [searchQuery]);
-  
+
   // Reset match count on each render
   matchCountRef.current = 0;
   matchRefs.current = [];
-  
+
   // Count matches after render
   useEffect(() => {
     if (onMatchCountChange) {
@@ -398,7 +400,7 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
       return () => clearTimeout(timer);
     }
   }, [content, searchRegex, onMatchCountChange]);
-  
+
   // Scroll to current match
   useEffect(() => {
     if (currentMatchIndex >= 0 && currentMatchIndex < matchRefs.current.length) {
@@ -408,14 +410,14 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
       }
     }
   }, [currentMatchIndex, searchRegex]);
-  
+
   // Render metadata if available
   const renderMetadata = () => {
     const { metadata } = content;
     const hasMetadata = metadata.title || metadata.author;
-    
+
     if (!hasMetadata) return null;
-    
+
     return (
       <div className="mb-6 pb-4 border-b border-border/50">
         {metadata.title && (
@@ -427,13 +429,13 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
       </div>
     );
   };
-  
+
   // Group consecutive list items for proper rendering
   const groupSections = (sections: ContentSection[]): (ContentSection | ContentSection[])[] => {
     const result: (ContentSection | ContentSection[])[] = [];
     let currentList: ContentSection[] = [];
     let currentListOrdered: boolean | null = null;
-    
+
     for (const section of sections) {
       if (section.section_type.type === 'ListItem') {
         const ordered = section.section_type.ordered;
@@ -454,20 +456,23 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
         result.push(section);
       }
     }
-    
+
     if (currentList.length > 0) {
       result.push(currentList);
     }
-    
+
     return result;
   };
-  
+
   const grouped = groupSections(content.sections);
-  
+
   return (
-    <div className={cn("structured-content max-w-none", isRTL && "text-right")}>
+    <div
+      className={cn("structured-content max-w-none", isRTL && "text-right")}
+      dir={isRTL ? "rtl" : "ltr"}
+    >
       {renderMetadata()}
-      
+
       {grouped.map((item, i) => {
         if (Array.isArray(item)) {
           // It's a list group
@@ -492,7 +497,7 @@ export const StructuredContentRenderer: React.FC<StructuredContentRendererProps>
             </ListTag>
           );
         }
-        
+
         return (
           <SectionRenderer
             key={i}

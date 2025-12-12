@@ -230,12 +230,6 @@ fn parse_document_xml_streaming<R: Read>(
     loop {
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                let is_empty = matches!(
-                    xml_reader.read_event_into(&mut Vec::new()),
-                    Ok(Event::Empty(_))
-                );
-                let _ = is_empty; // Suppress unused warning
-
                 match e.local_name().as_ref() {
                     // Paragraph
                     b"p" => {

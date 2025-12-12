@@ -1,5 +1,5 @@
 //! Document content extractors
-//! 
+//!
 //! This module provides text extraction for various document formats:
 //! - DOC (Legacy Microsoft Word 97-2003)
 //! - DOCX (Microsoft Word)
@@ -10,18 +10,19 @@
 mod doc;
 mod docx;
 mod pptx;
-mod xlsx;
 mod text;
+mod xlsx;
 
 pub use doc::extract_doc;
 pub use docx::extract_docx;
 pub use docx::extract_docx_structured;
 pub use pptx::extract_pptx;
-pub use xlsx::extract_xlsx;
+pub use pptx::extract_pptx_structured;
 pub use text::extract_text;
+pub use xlsx::extract_xlsx;
 
-use std::path::Path;
 use crate::models::DocumentContent;
+use std::path::Path;
 
 /// Supported file extensions
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["doc", "docx", "pptx", "xlsx", "txt", "md"];
@@ -46,40 +47,32 @@ pub fn extract_content_structured(path: &Path, ext: &str) -> Option<DocumentCont
     match ext {
         "docx" => extract_docx_structured(path),
         // For .doc files, we return plain text wrapped in a simple structure
-        "doc" => {
-            extract_doc(path).map(|content| {
-                DocumentContent {
-                    doc_type: "doc".to_string(),
-                    sections: vec![crate::models::ContentSection {
-                        section_type: crate::models::SectionType::Paragraph,
-                        content: Some(content),
-                        runs: None,
-                        children: None,
-                        properties: None,
-                    }],
-                    metadata: crate::models::DocumentMetadata::default(),
-                }
-            })
-        }
+        "doc" => extract_doc(path).map(|content| DocumentContent {
+            doc_type: "doc".to_string(),
+            sections: vec![crate::models::ContentSection {
+                section_type: crate::models::SectionType::Paragraph,
+                content: Some(content),
+                runs: None,
+                children: None,
+                properties: None,
+            }],
+            metadata: crate::models::DocumentMetadata::default(),
+        }),
         // TODO: Add structured extraction for other formats
-        // "pptx" => extract_pptx_structured(path),
+        "pptx" => extract_pptx_structured(path),
         // "xlsx" => extract_xlsx_structured(path),
         // For txt/md, we return plain text wrapped in a simple structure
-        "txt" | "md" => {
-            extract_text(path).map(|content| {
-                DocumentContent {
-                    doc_type: "text".to_string(),
-                    sections: vec![crate::models::ContentSection {
-                        section_type: crate::models::SectionType::Paragraph,
-                        content: Some(content),
-                        runs: None,
-                        children: None,
-                        properties: None,
-                    }],
-                    metadata: crate::models::DocumentMetadata::default(),
-                }
-            })
-        }
+        "txt" | "md" => extract_text(path).map(|content| DocumentContent {
+            doc_type: "text".to_string(),
+            sections: vec![crate::models::ContentSection {
+                section_type: crate::models::SectionType::Paragraph,
+                content: Some(content),
+                runs: None,
+                children: None,
+                properties: None,
+            }],
+            metadata: crate::models::DocumentMetadata::default(),
+        }),
         _ => None,
     }
 }

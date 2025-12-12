@@ -281,9 +281,14 @@ export function FilePreviewPane({
         })
     }
 
+    // Debug logging
+    useEffect(() => {
+        console.log('[FilePreviewPane] Props:', { file: file?.path, effectiveViewMode, searchQuery, totalMatches });
+    }, [file, effectiveViewMode, searchQuery, totalMatches]);
+
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-7xl w-[95vw] h-[90vh] p-0 gap-0 border-none shadow-2xl bg-background overflow-hidden flex flex-col">
+            <DialogContent className="!max-w-[98vw] !w-[98vw] !h-[95vh] !max-h-[95vh] p-0 gap-0 border-border/40 shadow-2xl bg-background/80 backdrop-blur-xl overflow-hidden flex flex-col sm:rounded-2xl ring-1 ring-white/10">
                 {/* Opening File Overlay */}
                 {isOpeningFile && (
                     <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
